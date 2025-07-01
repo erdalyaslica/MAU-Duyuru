@@ -1,15 +1,20 @@
-# .github/workflows/duyuru_kontrol.yml
-
+# İş akışının adı
 name: Maltepe Duyuru Kontrol
 
 on:
   schedule:
+    # Hafta içi her gün saat 10:00 (Türkiye saati) için cron zamanlaması
     - cron: '0 7 * * 1-5'
   workflow_dispatch:
   push:
     branches:
       - main
       - master
+
+# --- YENİ EKLENDİ: İŞ AKIŞINA YAZMA İZNİ VERME ---
+# Bu bölüm, iş akışının deponuza dosya gönderebilmesi için gereklidir.
+permissions:
+  contents: write
 
 jobs:
   check-announcements:
@@ -40,12 +45,20 @@ jobs:
           NOTIFICATION_EMAIL: ${{ secrets.NOTIFICATION_EMAIL }}
         run: python MAU_Duyuru.py
       
-      # --- YENİ KANIT TOPLAMA ADIMI ---
-      # Bu adım SADECE bir önceki adım hata verirse çalışır.
-      # Oluşturulan debug_page.html dosyasını indirilebilir bir ürün haline getirir.
-      - name: Debug Dosyasını Kaydet (Hata Durumunda)
-        uses: actions/upload-artifact@v4
-        if: failure()
-        with:
-          name: debug-kanit-dosyasi
-          path: MAU Duyuru/debug_page.html
+      # --- YENİ EKLENDİ: GÜNCELLENEN DOSYAYI GITHUB'A GÖNDERME ---
+      - name: Güncel Duyuru Listesini Geri Yükle
+        run: |
+          # Git için bot kimliğini yapılandır
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          
+          # Dosyada değişiklik olup olmadığını kontrol et
+          if [[ -n $(git status --porcelain last_announcements.json) ]]; then
+            echo "last_announcements.json dosyasında değişiklikler algılandı. Geri yükleniyor..."
+            git add last_announcements.json
+            # [skip ci] ifadesi, bu commit'in tekrar bir iş akışı tetiklemesini engeller (sonsuz döngü olmasın diye)
+            git commit -m "Duyuru listesi güncellendi [skip ci]"
+            git push
+          else
+            echo "last_announcements.json dosyasında değişiklik yok."
+          fi
