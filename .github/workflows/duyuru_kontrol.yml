@@ -1,0 +1,56 @@
+# İş akışının adı
+name: Maltepe Duyuru Kontrol
+
+# Bu iş akışını neyin tetikleyeceğini belirler
+on:
+  # 1. Zamanlanmış Görev: Belirttiğiniz saatte otomatik çalışır
+  schedule:
+    # Hafta içi her gün saat 10:00 (Türkiye saati) için cron zamanlaması
+    # NOT: GitHub Actions UTC saat dilimini kullanır. 10:00 (UTC+3) -> 07:00 (UTC)
+    - cron: '0 7 * * 1-5'
+
+  # 2. Manuel Tetikleme: GitHub Actions sayfasından elle çalıştırmanızı sağlar
+  workflow_dispatch:
+
+  # 3. Push Tetiklemesi: main branch'ine her kod gönderildiğinde çalışır (test için)
+  push:
+    branches:
+      - main
+      - master
+
+# İş akışında çalışacak görevler
+jobs:
+  # "check-announcements" adında bir görev tanımlıyoruz
+  check-announcements:
+    # Görevin çalışacağı sanal makine tipi
+    runs-on: ubuntu-latest
+
+    # Görevin adımları
+    steps:
+      # 1. Adım: Kodu GitHub deposundan sanal makineye indirir
+      - name: Depoyu Klonla
+        uses: actions/checkout@v4
+
+      # 2. Adım: Python'u kurar (örneğin versiyon 3.11)
+      - name: Python'u Kur
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # 3. Adım: Gerekli Python kütüphanelerini requirements.txt dosyasından yükler
+      - name: Bağımlılıkları Yükle
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # 4. Adım: Python script'ini çalıştırır
+      - name: Duyuru Takip Script'ini Çalıştır
+        # GitHub Secrets'tan aldığımız gizli bilgileri script'e ortam değişkeni olarak verir
+        env:
+          EMAIL_ENABLED: ${{ secrets.EMAIL_ENABLED }}
+          SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          EMAIL_USER: ${{ secrets.EMAIL_USER }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          NOTIFICATION_EMAIL: ${{ secrets.NOTIFICATION_EMAIL }}
+        run: python duyuru_takipci.py
