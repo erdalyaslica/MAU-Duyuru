@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 Maltepe Üniversitesi Duyuru Takip Scripti (Geliştirilmiş Versiyon)
@@ -201,7 +201,7 @@ class MAUDuyuruTakipci:
 
     def filter_important_announcements(self, announcements):
         """İstenen anahtar kelimeleri içeren önemli duyuruları filtreler"""
-        keywords = ["ALINACAKTIR", "DEĞERLENDİRME"]
+        keywords = ["ALINACAKTIR", "ÖN DEĞERLENDİRME SONUÇLARI"]
         filtered = []
         self.logger.info(f"Duyurular şu kelimelere göre filtreleniyor: {', '.join(keywords)}")
         for ann in announcements:
