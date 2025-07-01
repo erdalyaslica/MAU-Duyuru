@@ -1,0 +1,112 @@
+
+
+
+
+<header>
+
+    <h1 class="animation-slide-top">500</h1>
+
+    <p>MsgSystemErrorTitle</p>
+
+</header>
+
+<p class="error-advise">MsgSystemErrorMessage</p>
+
+
+
+<p>
+
+    <a class="btn btn-primary" href="/">
+
+        Bir hata oluştu, anasayfaya dönülüyor.
+
+    </a>
+
+</p>
+
+    <p>
+
+        <a href="javascript:void(0)" class="btn btn-xs btn-danger btn-outline" id="btn-technical" onclick="ViewTechnical()">
+
+            Teknik Detayı Görüntüle
+
+        </a>
+
+    </p>
+
+
+
+<div id="technical-container" style="display:none;text-align: left;">
+
+    <blockquote class="blockquote custom-blockquote blockquote-danger">
+
+        <p class="mb-0">Object reference not set to an instance of an object.</p>
+
+        <footer class="blockquote-footer">
+
+               at ASP._Page_Views_Shared_Error_cshtml.Execute() in C:\websites\maltepe.edu.tr\httpdocs\Views\Shared\Error.cshtml:line 7<br/>   at System.Web.WebPages.WebPageBase.ExecutePageHierarchy()<br/>   at System.Web.Mvc.WebViewPage.ExecutePageHierarchy()<br/>   at System.Web.WebPages.StartPage.ExecutePageHierarchy()<br/>   at System.Web.WebPages.WebPageBase.ExecutePageHierarchy(WebPageContext pageContext, TextWriter writer, WebPageRenderingBase startPage)<br/>   at System.Web.Mvc.ViewResultBase.ExecuteResult(ControllerContext context)<br/>   at System.Web.Mvc.ControllerActionInvoker.InvokeActionResultFilterRecursive(IList`1 filters, Int32 filterIndex, ResultExecutingContext preContext, ControllerContext controllerContext, ActionResult actionResult)<br/>   at System.Web.Mvc.ControllerActionInvoker.InvokeActionResultFilterRecursive(IList`1 filters, Int32 filterIndex, ResultExecutingContext preContext, ControllerContext controllerContext, ActionResult actionResult)<br/>   at System.Web.Mvc.ControllerActionInvoker.InvokeActionResultWithFilters(ControllerContext controllerContext, IList`1 filters, ActionResult actionResult)<br/>   at System.Web.Mvc.Async.AsyncControllerActionInvoker.<>c__DisplayClass21.<BeginInvokeAction>b__1e(IAsyncResult asyncResult)
+
+        </footer>
+
+    </blockquote>
+
+</div>
+
+<footer class="page-copyright">
+
+    <p>
+
+        2025 &#169; Nar Dijital Kullanıcı Y&#246;netim Yazılımı
+
+        <i class="red-600 wb wb-heart"></i>
+
+        <a href="#" target="_blank">
+
+            #.com
+
+        </a>
+
+    </p>
+
+    <p>2025 &#169; Nar Dijital Kullanıcı Y&#246;netim Yazılımı</p>
+
+    <div class="social">
+
+            <a class="btn btn-icon btn-pure" href="https://www.facebook.com/maltepeuniversitesi/?locale=tr_TR">
+
+                <i class="icon fa-facebook" aria-hidden="true"></i>
+
+            </a>
+
+                    <a class="btn btn-icon btn-pure" href="https://www.instagram.com/maltepeedutr/">
+
+                <i class="icon fa-instagram" aria-hidden="true"></i>
+
+            </a>
+
+                    <a class="btn btn-icon btn-pure" href="https://www.youtube.com/channel/UCzqORMYj3JH533lJFXbvjDQ">
+
+                <i class="icon fa-youtube" aria-hidden="true"></i>
+
+            </a>
+
+                    <a class="btn btn-icon btn-pure" href="https://x.com/MaltepeEduTr">
+
+                <i class="icon fa-twitter" aria-hidden="true"></i>
+
+            </a>
+
+                    </div>
+
+</footer>
+
+<script>
+
+    setTimeout(function () {
+
+ window.location.replace('/');
+
+    }, 3000);
+
+</script>
+
