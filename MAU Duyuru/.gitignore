@@ -1,0 +1,10 @@
+# Hassas bilgileri içeren ortam değişkenleri dosyasını yoksay
+.env
+
+# Python'un oluşturduğu geçici dosyaları ve klasörleri yoksay
+__pycache__/
+*.pyc
+
+# Sanal ortam klasörlerini yoksay (kullanıyorsanız)
+venv/
+.venv/
