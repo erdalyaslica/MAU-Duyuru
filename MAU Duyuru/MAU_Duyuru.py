@@ -1,16 +1,30 @@
-# MAU_Duyuru.py (Kanıt Toplama Versiyonu)
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Maltepe Üniversitesi Duyuru Takip Scripti (Final ve Kararlı Versiyon)
 
-import requests, json, logging, os, time, sys, traceback, smtplib
+Bu script, GitHub Actions'ın gördüğü gerçek HTML yapısına göre
+duyuruları parse eder, başlıkları temizler ve anahtar kelimelere göre
+filtreleyip e-posta gönderir.
+"""
+
+import requests
+import json
+import logging
+import os
+import time
 from datetime import datetime
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
+import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
+import sys
+import traceback
 
 class MAUDuyuruTakipci:
     def __init__(self):
-        # ... (Bu kısım aynı, değişiklik yok)
         load_dotenv()
         self.base_url = "https://www.maltepe.edu.tr"
         self.duyuru_url = "https://www.maltepe.edu.tr/tr/duyuru-listesi"
@@ -28,12 +42,11 @@ class MAUDuyuruTakipci:
         self.notification_email = os.getenv('NOTIFICATION_EMAIL', '')
         self.setup_logging()
         self.logger.info("="*60)
-        self.logger.info("MAÜ Duyuru Takipci başlatıldı (Kanıt Toplama Modu)")
+        self.logger.info("MAÜ Duyuru Takipci başlatıldı (Final Versiyon)")
         self.logger.info(f"Tarih: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         self.logger.info("="*60)
 
     def setup_logging(self):
-        # ... (Bu kısım aynı, değişiklik yok)
         log_format = '%(asctime)s - %(levelname)s - %(message)s'
         file_handler = logging.FileHandler(self.log_file, encoding='utf-8')
         file_handler.setLevel(logging.DEBUG)
@@ -47,56 +60,70 @@ class MAUDuyuruTakipci:
         self.logger.addHandler(console_handler)
 
     def save_debug_page(self, content, reason="Hata"):
-        # ... (Bu kısım aynı, değişiklik yok)
         try:
-            with open(self.debug_file, 'w', encoding='utf-8') as f: f.write(content)
+            with open(self.debug_file, 'w', encoding='utf-8') as f:
+                f.write(content)
             self.logger.info(f"Debug sayfası kaydedildi: {self.debug_file} (Sebep: {reason})")
-        except Exception as e: self.logger.error(f"Debug sayfası kaydedilemedi: {e}")
+        except Exception as e:
+            self.logger.error(f"Debug sayfası kaydedilemedi: {e}")
 
     def fetch_page(self, url, max_retries=3):
-        # ... (Bu kısım aynı, değişiklik yok)
         for attempt in range(max_retries):
             try:
                 self.logger.info(f"Sayfa indiriliyor (Deneme {attempt + 1}/{max_retries}): {url}")
                 response = self.session.get(url, timeout=30)
                 response.raise_for_status()
                 response.encoding = 'utf-8'
-                self.logger.info(f"Sayfa başarıyla indirildi. Boyut: {len(response.text)} karakter")
+                self.logger.info(f"Sayfa başarıyla indirildi.")
                 return response.text
             except requests.exceptions.RequestException as e:
                 self.logger.warning(f"Sayfa indirme hatası (Deneme {attempt + 1}): {e}")
-                if attempt < max_retries - 1: time.sleep((attempt + 1) * 5)
-                else: self.logger.error(f"Sayfa {max_retries} denemede indirilemedi"); raise
+                if attempt < max_retries - 1:
+                    time.sleep((attempt + 1) * 5)
+                else:
+                    self.logger.error(f"Sayfa {max_retries} denemede indirilemedi")
+                    raise
 
+    # --- YENİ, KESİN VE DOĞRU PARSE FONKSİYONU ---
     def parse_announcements(self, html_content):
-        # ... (Bu kısım aynı, değişiklik yok)
-        self.logger.info("Ham duyurular (temizlenmemiş) parse ediliyor...")
+        """HTML içeriğinden duyuruları GitHub'ın gördüğü gerçek yapıya göre parse eder."""
+        self.logger.info("Duyurular hedefe yönelik yeni mantıkla parse ediliyor...")
         soup = BeautifulSoup(html_content, 'html.parser')
         announcements = []
-        elements = soup.select('.page-announcement-list li a, a[href*="duyuru"]')
-        for element in elements:
-            title = element.get_text(strip=True)
-            link = element.get('href', '')
-            if title and link:
-                full_link = urljoin(self.base_url, link)
-                announcements.append({'title': title, 'link': full_link})
-        unique_announcements = {ann['link']: ann for ann in announcements}.values()
-        self.logger.info(f"Toplam {len(unique_announcements)} ham duyuru bulundu.")
-        return list(unique_announcements)
-    
-    def clean_titles_post_parsing(self, announcements):
-        # ... (Bu kısım aynı, değişiklik yok)
-        self.logger.info("Duyuru başlıkları temizleniyor...")
-        cleaned_list = []
-        for ann in announcements:
-            clean_title = ann['title'].replace("Detayı görüntüle", "").strip()
-            if clean_title:
-                ann['title'] = clean_title
-                cleaned_list.append(ann)
-        self.logger.info(f"{len(cleaned_list)} temizlenmiş duyuru işlenmeye hazır.")
-        return cleaned_list
+        
+        # Gerçek HTML yapısındaki doğru seçici: Her duyuru bir 'div.item' içinde.
+        duyuru_bloklari = soup.select('div.page-announcement-list div.item')
+        
+        if not duyuru_bloklari:
+            self.logger.warning("Hiçbir duyuru bloğu ('div.item') bulunamadı. Sayfa yapısı tekrar değişmiş olabilir.")
+            return []
 
-    # Diğer fonksiyonlar (load, save, find, filter, format, send_email) aynı kalacak
+        self.logger.info(f"{len(duyuru_bloklari)} adet duyuru bloğu bulundu.")
+
+        for blok in duyuru_bloklari:
+            try:
+                link_element = blok.find('a')
+                title_element = blok.find('div', class_='has-title')
+                
+                if not link_element or not title_element:
+                    continue
+
+                # Başlığı doğrudan doğru yerden aldığımız için temizlemeye gerek kalmadı.
+                title = title_element.get_text(strip=True)
+                
+                # Linki al ve tam URL'ye dönüştür
+                link = urljoin(self.base_url, link_element.get('href', ''))
+
+                announcements.append({'title': title, 'link': link})
+            except Exception as e:
+                self.logger.error(f"Bir duyuru bloğu parse edilirken hata oluştu: {e}")
+                continue
+        
+        # Yinelenenleri link'e göre temizle (daha güvenilir)
+        unique_announcements = list({ann['link']: ann for ann in announcements}.values())
+        self.logger.info(f"Toplam {len(unique_announcements)} benzersiz duyuru parse edildi.")
+        return unique_announcements
+
     def load_previous_announcements(self):
         try:
             if os.path.exists(self.json_file):
@@ -113,8 +140,8 @@ class MAUDuyuruTakipci:
         except Exception as e: self.logger.error(f"Duyurular kaydedilemedi: {e}")
 
     def find_new_announcements(self, current_announcements, previous_announcements):
-        previous_titles = {ann['title'] for ann in previous_announcements}
-        return [ann for ann in current_announcements if ann['title'] not in previous_titles]
+        previous_links = {ann['link'] for ann in previous_announcements}
+        return [ann for ann in current_announcements if ann['link'] not in previous_links]
 
     def filter_important_announcements(self, announcements):
         keywords = ["ALINACAKTIR", "DEĞERLENDİRME"]
@@ -152,23 +179,16 @@ class MAUDuyuruTakipci:
             return False
 
     def run(self):
-        """Ana çalıştırma fonksiyonu"""
         try:
             self.logger.info("Duyuru kontrolü başlatılıyor...")
             html_content = self.fetch_page(self.duyuru_url)
-            
-            raw_announcements = self.parse_announcements(html_content)
-            
-            # --- YENİ HATA KONTROLÜ ---
-            # Eğer 10'dan az duyuru bulunduysa, bu bir hatadır.
-            # Sayfayı kaydet ve script'i başarısız olarak sonlandır.
-            if len(raw_announcements) < 10:
-                self.logger.critical(f"Yetersiz duyuru bulundu: {len(raw_announcements)}. Site yapısı değişmiş olabilir.")
-                self.save_debug_page(html_content, "Yetersiz duyuru sayısı")
-                sys.exit(1) # Bu satır, GitHub Actions'ta "failure" durumunu tetikler
+            current_announcements = self.parse_announcements(html_content)
 
-            current_announcements = self.clean_titles_post_parsing(raw_announcements)
-            
+            if not current_announcements:
+                self.logger.warning("Parse işlemi sonucunda hiçbir duyuru bulunamadı!")
+                self.save_debug_page(html_content, "Parse sonucu boş")
+                return
+
             previous_announcements = self.load_previous_announcements()
             
             if not previous_announcements:
