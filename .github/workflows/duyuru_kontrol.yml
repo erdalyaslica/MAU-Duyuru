@@ -5,6 +5,11 @@ on:
   schedule:
     # Hafta içi her gün saat 10:00 (Türkiye saati) için cron zamanlaması
     - cron: '0 7 * * 1-5'
+
+   # --- YENİ EKLENDİ: Akşam 17:00 kontrolü ---
+    # Her gün saat 17:00 (Türkiye saati) için yeni cron zamanlaması. 17:00 (UTC+3) -> 14:00 (UTC)
+    - cron: '0 14 * * *'
+    
   workflow_dispatch:
   push:
     branches:
