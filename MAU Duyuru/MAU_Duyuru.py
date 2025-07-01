@@ -1,14 +1,27 @@
-# MAU_Duyuru.py (Düzeltilmiş ve Temizleme Eklenmiş Hali)
-
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import requests, json, logging, os, time, sys, traceback, smtplib
+"""
+Maltepe Üniversitesi Duyuru Takip Scripti (Final Versiyon)
+
+Bu script, en sağlam ve çok katmanlı duyuru bulma mantığını kullanır.
+Tüm duyurular bulunduktan sonra, başlıklar ayrıca temizlenir ve
+anahtar kelime filtresi bu temizlenmiş başlıklar üzerinde çalışır.
+"""
+
+import requests
+import json
+import logging
+import os
+import time
 from datetime import datetime
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
+import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
+import sys
+import traceback
 
 class MAUDuyuruTakipci:
     def __init__(self):
@@ -29,7 +42,7 @@ class MAUDuyuruTakipci:
         self.notification_email = os.getenv('NOTIFICATION_EMAIL', '')
         self.setup_logging()
         self.logger.info("="*60)
-        self.logger.info("MAÜ Duyuru Takipci başlatıldı")
+        self.logger.info("MAÜ Duyuru Takipci başlatıldı (En Kararlı Versiyon)")
         self.logger.info(f"Tarih: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         self.logger.info("="*60)
 
@@ -71,23 +84,50 @@ class MAUDuyuruTakipci:
                     self.logger.error(f"Sayfa {max_retries} denemede indirilemedi")
                     raise
 
+    # --- YERELDE ÇALIŞAN, EN SAĞLAM PARSE MANTIĞI ---
     def parse_announcements(self, html_content):
-        self.logger.info("Ham duyurular (temizlenmemiş) parse ediliyor...")
+        self.logger.info("Duyurular parse ediliyor (Geniş Selektör Mantığı)...")
         soup = BeautifulSoup(html_content, 'html.parser')
         announcements = []
-        elements = soup.select('.page-announcement-list li a, a[href*="duyuru"]')
+        selectors = [
+            '.page-announcement-list li',
+            '.page-announcement-list .announcement-item',
+            '.announcement-list li',
+            'div.views-row',
+            'a[href*="duyuru"]',
+        ]
+        for selector in selectors:
+            elements = soup.select(selector)
+            self.logger.debug(f"Selektör '{selector}' ile {len(elements)} element bulundu.")
+            if elements:
+                for element in elements:
+                    try:
+                        link_element = element if element.name == 'a' else element.find('a')
+                        if not link_element: continue
+                        
+                        title = link_element.get_text(strip=True)
+                        link = link_element.get('href', '')
+                        if not title: continue
+                        
+                        link = urljoin(self.base_url, link)
+                        announcements.append({'title': title, 'link': link})
+                    except Exception:
+                        continue
+                if announcements:
+                    self.logger.info(f"Başarılı selektör: '{selector}'. Parse işlemi durduruluyor.")
+                    break
         
-        for element in elements:
-            title = element.get_text(strip=True)
-            link = element.get('href', '')
-            if title and link:
-                full_link = urljoin(self.base_url, link)
-                announcements.append({'title': title, 'link': full_link})
-        
-        unique_announcements = {ann['link']: ann for ann in announcements}.values()
+        unique_announcements = []
+        seen_links = set()
+        for ann in announcements:
+            if ann['link'] not in seen_links:
+                unique_announcements.append(ann)
+                seen_links.add(ann['link'])
+                
         self.logger.info(f"Toplam {len(unique_announcements)} ham duyuru bulundu.")
-        return list(unique_announcements)
-    
+        return unique_announcements
+
+    # --- GÜVENLİ TEMİZLEME FONKSİYONU ---
     def clean_titles_post_parsing(self, announcements):
         self.logger.info("Duyuru başlıkları temizleniyor...")
         cleaned_list = []
@@ -121,7 +161,7 @@ class MAUDuyuruTakipci:
     def filter_important_announcements(self, announcements):
         keywords = ["ALINACAKTIR", "DEĞERLENDİRME"]
         filtered = [ann for ann in announcements if any(keyword in ann.get('title', '').upper() for keyword in keywords)]
-        self.logger.info(f"{len(filtered)} duyuru filtre ile eşleşti")
+        self.logger.info(f"Filtreleme sonucu: {len(filtered)} duyuru eşleşti.")
         return filtered
 
     def format_announcement_list_html(self, announcements):
@@ -157,13 +197,17 @@ class MAUDuyuruTakipci:
         try:
             self.logger.info("Duyuru kontrolü başlatılıyor...")
             html_content = self.fetch_page(self.duyuru_url)
+            
             raw_announcements = self.parse_announcements(html_content)
             current_announcements = self.clean_titles_post_parsing(raw_announcements)
+
             if not current_announcements:
                 self.logger.warning("İşlenecek temiz duyuru bulunamadı!")
                 self.save_debug_page(html_content, "Temiz duyuru bulunamadı")
                 return
+
             previous_announcements = self.load_previous_announcements()
+            
             if not previous_announcements:
                 self.logger.info("İlk çalıştırma. Mevcut duyurular kaydediliyor.")
                 print(self.format_announcement_list(current_announcements))
@@ -183,6 +227,7 @@ class MAUDuyuruTakipci:
                 else:
                     self.logger.info("Yeni duyuru bulunamadı.")
                     print("Yeni duyuru bulunamadı.")
+            
             self.save_announcements(current_announcements)
             self.logger.info("Duyuru kontrolü başarıyla tamamlandı.")
         except Exception as e:
