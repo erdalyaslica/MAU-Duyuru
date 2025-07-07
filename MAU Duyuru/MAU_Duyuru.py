@@ -42,7 +42,7 @@ class MAUDuyuruTakipci:
         self.notification_email = os.getenv('NOTIFICATION_EMAIL', '')
         self.setup_logging()
         self.logger.info("="*60)
-        self.logger.info("MAÜ Duyuru Takipci başlatıldı (Final Versiyon)")
+        self.logger.info("MAÜ Duyuru Takipçi başlatıldı (Final Versiyon)")
         self.logger.info(f"Tarih: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         self.logger.info("="*60)
 
@@ -86,7 +86,7 @@ class MAUDuyuruTakipci:
 
     # --- YENİ, KESİN VE DOĞRU PARSE FONKSİYONU ---
     def parse_announcements(self, html_content):
-        """HTML içeriğinden duyuruları GitHub'ın gördüğü gerçek yapıya göre parse eder."""
+        """HTML içeriğinden duyuruları GitHub Actions'ın gördüğü gerçek yapıya göre parse eder."""
         self.logger.info("Duyurular hedefe yönelik yeni mantıkla parse ediliyor...")
         soup = BeautifulSoup(html_content, 'html.parser')
         announcements = []
