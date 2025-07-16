@@ -1,12 +1,18 @@
-# MAU_Duyuru.py (Plan B: cloudscraper ile 403 Hatası Çözümü)
+# MAU_Duyuru.py (Plan C: Selenium ile Geliştirilmiş)
 
 import os
 import sys
 import json
 import logging
 import datetime
-# import requests # <<< DEĞİŞİKLİK 1: requests'i devre dışı bırakıyoruz
-import cloudscraper # <<< DEĞİŞİKLİK 1: cloudscraper'ı içeri aktarıyoruz
+import time
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.options import Options
+from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from webdriver_manager.chrome import ChromeDriverManager
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
@@ -32,9 +38,9 @@ def setup_logging():
         ]
     )
     logging.info("="*50)
-    logging.info("Duyuru kontrol scripti başlatıldı (Plan B: cloudscraper).")
+    logging.info("Duyuru kontrol scripti başlatıldı (Plan C: Selenium Geliştirilmiş).")
 
-# --- Dosya İşlemleri (Değişiklik yok) ---
+# --- Dosya İşlemleri ---
 def load_previous_announcements():
     if not os.path.exists(JSON_FILE):
         logging.warning(f"'{JSON_FILE}' bulunamadı. İlk çalıştırma olarak kabul ediliyor.")
@@ -61,7 +67,7 @@ def save_announcements(titles):
         logging.error(f"Duyurular '{JSON_FILE}' dosyasına kaydedilirken hata: {e}")
         notify_admin(f"Kritik Hata: Duyurular JSON dosyasına yazılamadı!", f"Detaylar: {e}")
 
-# --- Hata Yönetimi (Değişiklik yok) ---
+# --- Hata Yönetimi ---
 def save_debug_page(content):
     try:
         with open(DEBUG_HTML_FILE, 'w', encoding='utf-8') as f:
@@ -74,59 +80,170 @@ def notify_admin(subject, body):
     logging.critical(f"YÖNETİCİ BİLDİRİMİ GEREKİYOR: Başlık: {subject}")
     logging.critical(f"Detay: {body}")
 
-# --- Çekirdek Fonksiyonlar ---
-def scrape_announcements():
-    logging.info(f"Duyurular şu adresten çekiliyor: {URL}")
-
-    # <<< DEĞİŞİKLİK 2: cloudscraper nesnesi oluşturuluyor >>>
-    # Bu nesne, anti-bot sistemlerini geçmek için gerekli ayarları otomatik yapar.
-    scraper = cloudscraper.create_scraper()
+# --- Selenium WebDriver Kurulumu ---
+def setup_webdriver():
+    logging.info("Selenium ile tarayıcı başlatılıyor...")
     
-    # Not: cloudscraper kendi etkili başlıklarını yönettiği için özel header tanımlamaya gerek kalmayabilir,
-    # ancak fazladan göndermenin zararı olmaz.
-    headers = {
-        'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
-        'Referer': 'https://www.google.com/'
-    }
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--window-size=1920,1080")
+    chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    chrome_options.add_experimental_option('useAutomationExtension', False)
     
     try:
-        # <<< DEĞİŞİKLİK 3: requests.get() yerine scraper.get() kullanılıyor >>>
-        # cloudscraper, requests ile uyumlu olduğundan hata yakalama (exception) blokları aynı kalabilir.
-        response = scraper.get(URL, headers=headers, timeout=30) # Timeout'u biraz artırmak iyi olabilir
-        response.raise_for_status()
-    except Exception as e: # cloudscraper bazen farklı hatalar fırlatabilir, genel Exception daha güvenli.
-        logging.error(f"Sayfa çekilirken hata oluştu: {e}")
-        if hasattr(e, 'response') and e.response is not None:
-            save_debug_page(e.response.text)
-        notify_admin("Duyuru Script Hatası: Sayfa Erişimi", f"URL: {URL}\nHata: {e}")
+        driver = webdriver.Chrome(ChromeDriverManager().install(), options=chrome_options)
+        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        return driver
+    except Exception as e:
+        logging.error(f"WebDriver kurulumu başarısız: {e}")
+        notify_admin("Selenium Kurulum Hatası", f"WebDriver başlatılamadı: {e}")
         return None
 
-    page_content = response.text
-    soup = BeautifulSoup(page_content, 'html.parser')
-
-    selectors = [
-        "div.page-announcement-list div.announcement-item h3",
-        "div.announcement-list div.announcement-item h3",
-        "a.announcement-item-link h3"
-    ]
-    
-    titles = []
-    for selector in selectors:
-        elements = soup.select(selector)
-        if elements:
-            titles = [elem.get_text(strip=True) for elem in elements]
-            logging.info(f"{len(titles)} adet başlık '{selector}' seçicisi ile başarıyla bulundu.")
-            break
-    
-    if not titles:
-        logging.critical("Hiçbir seçici ile duyuru başlığı bulunamadı! Sayfa yapısı değişmiş veya koruma aşılamamış olabilir.")
-        save_debug_page(page_content)
-        notify_admin("Duyuru Script Hatası: Başlık Bulunamadı", f"Sayfa yapısı değişmiş veya koruma aşılamamış olabilir. '{DEBUG_HTML_FILE}' dosyasını kontrol edin.")
+# --- Çekirdek Fonksiyonlar ---
+def scrape_announcements():
+    driver = setup_webdriver()
+    if not driver:
         return None
+    
+    try:
+        logging.info(f"Sayfa yükleniyor: {URL}")
+        driver.get(URL)
         
-    return titles
+        # Sayfa yüklenmesini bekle
+        wait = WebDriverWait(driver, 20)
+        
+        # Çoklu bekleme stratejisi
+        selectors_to_wait = [
+            (By.CSS_SELECTOR, "div.page-announcement-list"),
+            (By.CSS_SELECTOR, "div.announcement-list"),
+            (By.CSS_SELECTOR, ".announcement-item"),
+            (By.CSS_SELECTOR, "h3"),
+            (By.TAG_NAME, "body")
+        ]
+        
+        # En az bir selector'ın yüklenmesini bekle
+        element_found = False
+        for by, selector in selectors_to_wait:
+            try:
+                wait.until(EC.presence_of_element_located((by, selector)))
+                logging.info(f"Sayfa elementi bulundu: {selector}")
+                element_found = True
+                break
+            except TimeoutException:
+                continue
+        
+        if not element_found:
+            logging.warning("Hiçbir beklenen element bulunamadı, yine de devam ediliyor...")
+        
+        # JavaScript'in çalışması için ekstra bekleme
+        time.sleep(3)
+        
+        # Sayfayı scroll et (lazy loading için)
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(2)
+        
+        # Sayfa kaynağını al
+        page_source = driver.page_source
+        logging.info("Sayfa kaynağı alındı, BeautifulSoup ile parse ediliyor...")
+        
+        soup = BeautifulSoup(page_source, 'html.parser')
+        
+        # Geliştirilmiş seçici listesi
+        selectors = [
+            "div.page-announcement-list div.announcement-item h3",
+            "div.announcement-list div.announcement-item h3", 
+            "div.announcement-item h3",
+            ".announcement-item h3",
+            "a.announcement-item-link h3",
+            ".announcement-item-link h3",
+            "div.announcement h3",
+            ".announcement h3",
+            "div[class*='announcement'] h3",
+            "div[class*='duyuru'] h3",
+            "h3[class*='title']",
+            "h3[class*='baslik']",
+            # Fallback seçiciler
+            "h3",
+            "div.title",
+            ".title",
+            "a[href*='duyuru']"
+        ]
+        
+        titles = []
+        successful_selector = None
+        
+        for selector in selectors:
+            try:
+                elements = soup.select(selector)
+                if elements:
+                    potential_titles = []
+                    for elem in elements:
+                        text = elem.get_text(strip=True)
+                        if text and len(text) > 10:  # Boş veya çok kısa başlıkları filtrele
+                            potential_titles.append(text)
+                    
+                    if potential_titles:
+                        titles = potential_titles
+                        successful_selector = selector
+                        logging.info(f"{len(titles)} adet başlık '{selector}' seçicisi ile başarıyla bulundu.")
+                        break
+            except Exception as e:
+                logging.warning(f"Seçici '{selector}' ile hata: {e}")
+                continue
+        
+        if not titles:
+            logging.critical("Hiçbir seçici ile duyuru başlığı bulunamadı!")
+            
+            # Debug bilgisi ekle
+            logging.info("Debug: Sayfa başlığı: " + soup.title.string if soup.title else "Başlık bulunamadı")
+            
+            # Sayfada bulunan tüm h3'leri logla
+            all_h3 = soup.find_all('h3')
+            logging.info(f"Debug: Sayfada toplam {len(all_h3)} adet h3 elementi bulundu")
+            for i, h3 in enumerate(all_h3[:5]):  # İlk 5 tanesini göster
+                logging.info(f"Debug h3[{i}]: {h3.get_text(strip=True)[:100]}")
+            
+            # Announcement içeren div'leri bul
+            announcement_divs = soup.find_all('div', class_=lambda x: x and 'announcement' in x.lower())
+            logging.info(f"Debug: 'announcement' içeren {len(announcement_divs)} div bulundu")
+            
+            save_debug_page(page_source)
+            notify_admin("Duyuru Script Hatası: Başlık Bulunamadı", 
+                        f"Selenium ile sayfa yüklendi ancak CSS seçicisi eşleşmedi. '{DEBUG_HTML_FILE}' dosyasını kontrol edin.")
+            return None
+        
+        # Başlıkları temizle ve filtrele
+        cleaned_titles = []
+        for title in titles:
+            if title and len(title.strip()) > 5:  # Çok kısa başlıkları filtrele
+                cleaned_titles.append(title.strip())
+        
+        logging.info(f"Toplam {len(cleaned_titles)} adet temizlenmiş başlık bulundu.")
+        logging.info(f"Kullanılan seçici: {successful_selector}")
+        
+        return cleaned_titles
+        
+    except Exception as e:
+        logging.error(f"Sayfa çekilirken hata oluştu: {e}")
+        try:
+            save_debug_page(driver.page_source)
+        except:
+            pass
+        notify_admin("Duyuru Script Hatası: Selenium", f"URL: {URL}\nHata: {e}")
+        return None
+    finally:
+        try:
+            driver.quit()
+            logging.info("Tarayıcı kapatıldı.")
+        except:
+            pass
 
-# --- Ana İş Akışı (Değişiklik Yok) ---
+# --- Ana İş Akışı ---
 def main():
     setup_logging()
     previous_titles = load_previous_announcements()
@@ -137,7 +254,6 @@ def main():
         logging.critical("Veri çekilemediği için işlem sonlandırılıyor.")
         sys.exit(1)
 
-    # ... (main fonksiyonunun geri kalanı aynı)
     if is_first_run:
         logging.info("İlk çalıştırma. Tüm duyurular listeleniyor:")
         print("\n--- TÜM DUYURULAR (İLK ÇALIŞTIRMA) ---")
@@ -166,7 +282,6 @@ def main():
 
     save_announcements(current_titles)
     logging.info("Script başarıyla tamamlandı.")
-
 
 if __name__ == "__main__":
     main()
