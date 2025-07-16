@@ -15,7 +15,6 @@ from selenium.common.exceptions import TimeoutException, NoSuchElementException
 from webdriver_manager.chrome import ChromeDriverManager
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
-from selenium.webdriver.chrome.service import Service  # Bu import'u ekleyin
 
 # --- Sabitler ve Konfigürasyon ---
 URL = "https://www.maltepe.edu.tr/tr/duyuru-listesi"
@@ -49,7 +48,35 @@ def load_previous_announcements():
     try:
         with open(JSON_FILE, 'r', encoding='utf-8') as f:
             data = json.load(f)
-            return data.get('titles', []) if isinstance(data, dict) else data
+            
+            # Veri formatını kontrol et ve normalize et
+            if isinstance(data, dict):
+                titles = data.get('titles', [])
+            elif isinstance(data, list):
+                titles = data
+            else:
+                logging.warning(f"Beklenmeyen veri formatı: {type(data)}. Boş liste döndürülüyor.")
+                return []
+            
+            # Tüm öğelerin string olduğundan emin ol
+            clean_titles = []
+            for title in titles:
+                if isinstance(title, str):
+                    clean_titles.append(title)
+                elif isinstance(title, dict):
+                    # Eğer dict ise, 'title' veya 'text' anahtarını ara
+                    if 'title' in title:
+                        clean_titles.append(str(title['title']))
+                    elif 'text' in title:
+                        clean_titles.append(str(title['text']))
+                    else:
+                        logging.warning(f"Dict formatında başlık işlenemedi: {title}")
+                else:
+                    clean_titles.append(str(title))
+            
+            logging.info(f"Önceki duyuru dosyasından {len(clean_titles)} adet başlık yüklendi.")
+            return clean_titles
+            
     except (json.JSONDecodeError, FileNotFoundError) as e:
         logging.error(f"'{JSON_FILE}' okunurken hata oluştu: {e}. İlk çalıştırma olarak devam ediliyor.")
         return []
@@ -81,9 +108,7 @@ def notify_admin(subject, body):
     logging.critical(f"YÖNETİCİ BİLDİRİMİ GEREKİYOR: Başlık: {subject}")
     logging.critical(f"Detay: {body}")
 
-
-
-# --- Selenium WebDriver Kurulumu (Service ile) ---
+# --- Selenium WebDriver Kurulumu ---
 def setup_webdriver():
     logging.info("Selenium ile tarayıcı başlatılıyor...")
     
@@ -99,37 +124,30 @@ def setup_webdriver():
     chrome_options.add_experimental_option('useAutomationExtension', False)
     
     try:
-        # Service objesi oluştur
-        service = Service(ChromeDriverManager().install())
+        # ChromeDriver yolunu al
+        driver_path = ChromeDriverManager().install()
+        logging.info(f"ChromeDriver yolu: {driver_path}")
         
         # WebDriver'ı başlat
-        driver = webdriver.Chrome(service=service, options=chrome_options)
+        driver = webdriver.Chrome(executable_path=driver_path, options=chrome_options)
         driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         
         logging.info("WebDriver başarıyla başlatıldı.")
         return driver
     except Exception as e:
         logging.error(f"WebDriver kurulumu başarısız: {e}")
-        notify_admin("Selenium Kurulum Hatası", f"WebDriver başlatılamadı: {e}")
-        return None
-    
-    try:
-        # Service ile doğru kullanım
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=chrome_options)
-        return driver
-    except Exception as e:
-        logging.error(f"WebDriver kurulumu başarısız: {e}")
-        return None
-    
-    try:
-        driver = webdriver.Chrome(ChromeDriverManager().install(), options=chrome_options)
-        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-        return driver
-    except Exception as e:
-        logging.error(f"WebDriver kurulumu başarısız: {e}")
-        notify_admin("Selenium Kurulum Hatası", f"WebDriver başlatılamadı: {e}")
-        return None
+        
+        # Fallback: executable_path olmadan dene
+        try:
+            logging.info("Fallback: executable_path olmadan deneniyor...")
+            driver = webdriver.Chrome(options=chrome_options)
+            driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            logging.info("Fallback WebDriver başarıyla başlatıldı.")
+            return driver
+        except Exception as e2:
+            logging.error(f"Fallback WebDriver kurulumu da başarısız: {e2}")
+            notify_admin("Selenium Kurulum Hatası", f"WebDriver başlatılamadı: {e}\nFallback hatası: {e2}")
+            return None
 
 # --- Çekirdek Fonksiyonlar ---
 def scrape_announcements():
@@ -289,23 +307,36 @@ def main():
         print("----------------------------------------")
     else:
         logging.info("Sonraki çalıştırma. Sadece yeni ve ilgili duyurular listelenecek.")
-        previous_titles_set = set(previous_titles)
-        new_titles = [title for title in current_titles if title not in previous_titles_set]
         
-        if not new_titles:
-            logging.info("Yeni duyuru bulunamadı.")
-        else:
-            logging.info(f"{len(new_titles)} adet yeni duyuru tespit edildi.")
-            filtered_new_titles = [title for title in new_titles if KEYWORD in title.lower()]
+        # Güvenli set dönüşümü
+        try:
+            previous_titles_set = set(str(title) for title in previous_titles if title)
+            current_titles_set = set(str(title) for title in current_titles if title)
             
-            if filtered_new_titles:
-                logging.info(f"'{KEYWORD}' anahtar kelimesini içeren {len(filtered_new_titles)} yeni duyuru bulundu:")
-                print(f"\n--- '{KEYWORD}' İÇEREN YENİ DUYURULAR ---")
-                for title in filtered_new_titles:
-                    print(f"- {title}")
-                print("-------------------------------------------")
+            new_titles = [title for title in current_titles if str(title) not in previous_titles_set]
+            
+            if not new_titles:
+                logging.info("Yeni duyuru bulunamadı.")
             else:
-                logging.info(f"Yeni duyurular arasında '{KEYWORD}' içeren bulunamadı.")
+                logging.info(f"{len(new_titles)} adet yeni duyuru tespit edildi.")
+                filtered_new_titles = [title for title in new_titles if KEYWORD.lower() in title.lower()]
+                
+                if filtered_new_titles:
+                    logging.info(f"'{KEYWORD}' anahtar kelimesini içeren {len(filtered_new_titles)} yeni duyuru bulundu:")
+                    print(f"\n--- '{KEYWORD}' İÇEREN YENİ DUYURULAR ---")
+                    for title in filtered_new_titles:
+                        print(f"- {title}")
+                    print("-------------------------------------------")
+                else:
+                    logging.info(f"Yeni duyurular arasında '{KEYWORD}' içeren bulunamadı.")
+                    
+        except Exception as e:
+            logging.error(f"Duyuru karşılaştırması sırasında hata: {e}")
+            logging.info("Güvenli mod: Tüm mevcut duyurular listelenecek.")
+            print(f"\n--- MEVCUT DUYURULAR (GÜVENLI MOD) ---")
+            for title in current_titles:
+                print(f"- {title}")
+            print("----------------------------------------")
 
     save_announcements(current_titles)
     logging.info("Script başarıyla tamamlandı.")
