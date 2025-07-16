@@ -244,56 +244,47 @@ def scrape_announcements():
         except:
             pass
 
-# --- Ana İş Akışı ---
+# --- Ana İş Akışı (Loglama Geliştirilmiş) ---
 def main():
     setup_logging()
     previous_titles = load_previous_announcements()
-    is_first_run = not previous_titles
     current_titles = scrape_announcements()
 
-    if current_titles is None:
-        logging.critical("Veri çekilemediği için işlem sonlandırılıyor.")
-        sys.exit(1)
+    if not current_titles:
+        logging.warning("Güncel duyuru bulunamadı veya siteye erişilemedi. İşlem sonlandırılıyor.")
+        sys.exit(0) # Hata değil, normal bir bitiş olarak çık
 
-    if is_first_run:
-        logging.info("İlk çalıştırma. Tüm duyurular listeleniyor:")
-        print("\n--- TÜM DUYURULAR (İLK ÇALIŞTIRMA) ---")
-        for title in current_titles:
-            print(f"- {title}")
-        print("----------------------------------------")
+    # --- YENİ EKLENEN LOGLAMA ADIMI ---
+    # Her çalıştırmada bulunan tüm güncel duyuruları loglara yazdırır.
+    logging.info("--- SİTEDEKİ GÜNCEL DUYURULAR ---")
+    # sorted() ile listenin her zaman aynı sırada (alfabetik) loglanmasını sağlıyoruz.
+    for title in sorted(current_titles):
+        logging.info(f"-> {title}")
+    logging.info("--- GÜNCEL DUYURU LİSTESİ SONU ---")
+    # --- LOGLAMA ADIMI SONU ---
+
+    # Yeni duyuruları bulmak için karşılaştırma yap
+    previous_titles_set = set(previous_titles)
+    new_titles = [title for title in current_titles if title not in previous_titles_set]
+    
+    if not new_titles:
+        logging.info("Yeni duyuru bulunamadı.")
     else:
-        logging.info("Sonraki çalıştırma. Sadece yeni ve ilgili duyurular listelenecek.")
-        
-        # Güvenli set dönüşümü
-        try:
-            previous_titles_set = set(str(title) for title in previous_titles if title)
-            current_titles_set = set(str(title) for title in current_titles if title)
-            
-            new_titles = [title for title in current_titles if str(title) not in previous_titles_set]
-            
-            if not new_titles:
-                logging.info("Yeni duyuru bulunamadı.")
-            else:
-                logging.info(f"{len(new_titles)} adet yeni duyuru tespit edildi.")
-                filtered_new_titles = [title for title in new_titles if KEYWORD.lower() in title.lower()]
-                
-                if filtered_new_titles:
-                    logging.info(f"'{KEYWORD}' anahtar kelimesini içeren {len(filtered_new_titles)} yeni duyuru bulundu:")
-                    print(f"\n--- '{KEYWORD}' İÇEREN YENİ DUYURULAR ---")
-                    for title in filtered_new_titles:
-                        print(f"- {title}")
-                    print("-------------------------------------------")
-                else:
-                    logging.info(f"Yeni duyurular arasında '{KEYWORD}' içeren bulunamadı.")
-                    
-        except Exception as e:
-            logging.error(f"Duyuru karşılaştırması sırasında hata: {e}")
-            logging.info("Güvenli mod: Tüm mevcut duyurular listelenecek.")
-            print(f"\n--- MEVCUT DUYURULAR (GÜVENLI MOD) ---")
-            for title in current_titles:
-                print(f"- {title}")
-            print("----------------------------------------")
+        logging.info(f"--- {len(new_titles)} ADET YENİ DUYURU TESPİT EDİLDİ ---")
+        for title in sorted(new_titles):
+            logging.info(f"YENİ: {title}")
+        logging.info("--- YENİ DUYURU LİSTESİ SONU ---")
 
+        # Anahtar kelimeyi içeren yeni duyuruları bul ve ayrıca logla
+        filtered_new_titles = [title for title in new_titles if KEYWORD.lower() in title.lower()]
+        if filtered_new_titles:
+            # Önemli duyuruları daha belirgin hale getirmek için log seviyesini WARNING yapıyoruz.
+            logging.warning(f"--- ÖNEMLİ: '{KEYWORD}' İÇEREN YENİ DUYURULAR ---")
+            for title in sorted(filtered_new_titles):
+                logging.warning(f"BULUNDU: {title}")
+            logging.warning("--- ÖNEMLİ DUYURULAR LİSTE SONU ---")
+
+    # Her zaman en güncel listeyi JSON dosyasına kaydet
     save_announcements(current_titles)
     logging.info("Script başarıyla tamamlandı.")
 
