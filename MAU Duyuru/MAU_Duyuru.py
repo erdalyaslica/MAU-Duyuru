@@ -23,7 +23,7 @@ JSON_FILE = "last_announcements.json"
 LOG_FILE = "duyuru.log"
 DEBUG_HTML_FILE = "debug_page.html"
 ENV_FILE = ".env"
-KEYWORD = "alınacaktır"
+KEYWORD = "ALINACAKTIR"
 
 # --- Ortam Değişkenlerini Yükle ---
 load_dotenv(dotenv_path=ENV_FILE)
