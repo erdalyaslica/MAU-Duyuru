@@ -13,6 +13,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.chrome.service import Service as ChromeService
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
@@ -129,7 +130,10 @@ def setup_webdriver():
         logging.info(f"ChromeDriver yolu: {driver_path}")
         
         # WebDriver'ı başlat
-        driver = webdriver.Chrome(executable_path=driver_path, options=chrome_options)
+       
+        service = ChromeService(executable_path=driver_path)
+        driver = webdriver.Chrome(service=service, options=chrome_options)
+
         driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         
         logging.info("WebDriver başarıyla başlatıldı.")
