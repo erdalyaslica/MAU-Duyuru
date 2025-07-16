@@ -332,7 +332,7 @@ def main():
         if new_keyword_announcements:
             logging.warning(f"'{KEYWORD}' içeren YENİ duyuru(lar) tespit edildi! E-posta gönderiliyor...")
             
-            email_subject = f"Maltepe Üni. - Aktif '{KEYWORD}' Duyuruları"
+            email_subject = f"Maltepe Üni. Personel Alımı Duyurusu"
             
             html_body = (f"<h3>Merhaba,</h3>"
                          f"<p>Maltepe Üniversitesi'nde '{KEYWORD}' kelimesini içeren aktif duyurular aşağıdadır. "
@@ -344,7 +344,7 @@ def main():
                 marker = " &nbsp;<b>★ YENİ!</b>" if ann in new_keyword_announcements else ""
                 html_body += f"<li><a href='{ann['link']}' target='_blank'>{ann['title']}</a>{marker}</li>"
             
-            html_body += '</ul><hr><p><small>Bu e-posta, MAU-Duyuru betiği tarafından otomatik olarak gönderilmiştir.</small></p>'
+            html_body += '</ul><hr><p><small>Bu e-posta, MAU-Duyuru betiği GİTHUB Actions tarafından otomatik olarak gönderilmiştir.</small></p>'
             
             send_email(email_subject, html_body)
         else:
