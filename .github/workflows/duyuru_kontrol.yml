@@ -50,24 +50,19 @@ jobs:
           NOTIFICATION_EMAIL: ${{ secrets.NOTIFICATION_EMAIL }}
         run: python MAU_Duyuru.py
       
-      # --- YENİ EKLENDİ: GÜNCELLENEN DOSYAYI GITHUB'A GÖNDERME ---
       - name: Güncel Duyuru Listesini Geri Yükle
         run: |
-          # Git için bot kimliğini yapılandır
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
           
-          # Dosyada değişiklik olup olmadığını kontrol et
           if [[ -n $(git status --porcelain last_announcements.json) ]]; then
             echo "last_announcements.json dosyasında değişiklikler algılandı. Geri yükleniyor..."
             
-            # --- YENİ VE SAĞLAM ÇAKIŞMA ÖNLEME YÖNTEMİ ---
-
+            # --- SAĞLAM ÇAKIŞMA ÖNLEME YÖNTEMİ ---
             # 1. Güncel dosyayı güvenli bir yere taşı
             mv last_announcements.json /tmp/last_announcements.json
             
-            # 2. Uzak depodaki en son hale kendini zorla eşitle (çakışmaları temizle)
-            # Not: Bu komut normalde tehlikelidir ama burada sadece bu dosya için kullandığımızdan güvenli.
+            # 2. Uzak depodaki en son hale kendini zorla eşitle
             git reset --hard origin/master
             
             # 3. Güvenli yere taşıdığımız güncel dosyayı geri koy
@@ -77,9 +72,6 @@ jobs:
             git add last_announcements.json
             git commit -m "Duyuru listesi güncellendi [skip ci]"
             git push
-            
-            # --- YÖNTEM SONU ---
-            
           else
             echo "last_announcements.json dosyasında değişiklik yok."
           fi
