@@ -154,6 +154,7 @@ def setup_webdriver():
             return None
 
 # --- Çekirdek Fonksiyonlar ---
+# --- Çekirdek Fonksiyonlar ---
 def scrape_announcements():
     driver = setup_webdriver()
     if not driver:
@@ -166,37 +167,18 @@ def scrape_announcements():
         # Sayfa yüklenmesini bekle
         wait = WebDriverWait(driver, 20)
         
-        # Çoklu bekleme stratejisi
-        selectors_to_wait = [
-            (By.CSS_SELECTOR, "div.page-announcement-list"),
-            (By.CSS_SELECTOR, "div.announcement-list"),
-            (By.CSS_SELECTOR, ".announcement-item"),
-            (By.CSS_SELECTOR, "h3"),
-            (By.TAG_NAME, "body")
-        ]
+        # Ana duyuru konteynerlarından birinin yüklenmesini bekle
+        try:
+            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.page-announcement-list, div.announcement-list")))
+            logging.info("Ana duyuru konteyneri bulundu.")
+        except TimeoutException:
+            logging.warning("Ana duyuru konteyneri bulunamadı, yine de devam ediliyor...")
         
-        # En az bir selector'ın yüklenmesini bekle
-        element_found = False
-        for by, selector in selectors_to_wait:
-            try:
-                wait.until(EC.presence_of_element_located((by, selector)))
-                logging.info(f"Sayfa elementi bulundu: {selector}")
-                element_found = True
-                break
-            except TimeoutException:
-                continue
-        
-        if not element_found:
-            logging.warning("Hiçbir beklenen element bulunamadı, yine de devam ediliyor...")
-        
-        # JavaScript'in çalışması için ekstra bekleme
+        # JavaScript'in çalışması için ekstra bekleme ve scroll
         time.sleep(3)
-        
-        # Sayfayı scroll et (lazy loading için)
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(2)
         
-        # Sayfa kaynağını al
         page_source = driver.page_source
         logging.info("Sayfa kaynağı alındı, BeautifulSoup ile parse ediliyor...")
         
@@ -205,27 +187,17 @@ def scrape_announcements():
         # Geliştirilmiş seçici listesi
         selectors = [
             "div.page-announcement-list div.announcement-item h3",
-            "div.announcement-list div.announcement-item h3", 
+            "div.announcement-list div.announcement-item h3",
             "div.announcement-item h3",
-            ".announcement-item h3",
             "a.announcement-item-link h3",
-            ".announcement-item-link h3",
-            "div.announcement h3",
-            ".announcement h3",
             "div[class*='announcement'] h3",
-            "div[class*='duyuru'] h3",
-            "h3[class*='title']",
-            "h3[class*='baslik']",
-            # Fallback seçiciler
-            "h3",
-            "div.title",
-            ".title",
-            "a[href*='duyuru']"
+            "h3", # Genel fallback
+            "a[href*='duyuru']" # En son fallback
         ]
         
-        titles = []
-        successful_selector = None
-        
+        # --- YENİ MANTIK BAŞLANGICI ---
+        all_results = {} # Her seçicinin sonucunu saklamak için bir sözlük
+
         for selector in selectors:
             try:
                 elements = soup.select(selector)
@@ -234,51 +206,36 @@ def scrape_announcements():
                     for elem in elements:
                         text = elem.get_text(strip=True)
                         if text and len(text) > 10:  # Boş veya çok kısa başlıkları filtrele
-                            potential_titles.append(text)
+                            potential_titles.append(text.strip())
                     
                     if potential_titles:
-                        titles = potential_titles
-                        successful_selector = selector
-                        logging.info(f"{len(titles)} adet başlık '{selector}' seçicisi ile başarıyla bulundu.")
-                        break
+                        # Tekrarlananları önlemek için set kullan
+                        all_results[selector] = list(set(potential_titles))
+                        logging.info(f"'{selector}' seçicisi ile {len(all_results[selector])} adet tekil başlık bulundu.")
             except Exception as e:
                 logging.warning(f"Seçici '{selector}' ile hata: {e}")
                 continue
         
-        if not titles:
+        # En çok sonuç veren seçiciyi bul
+        if not all_results:
             logging.critical("Hiçbir seçici ile duyuru başlığı bulunamadı!")
-            
-            # Debug bilgisi ekle
-            logging.info("Debug: Sayfa başlığı: " + soup.title.string if soup.title else "Başlık bulunamadı")
-            
-            # Sayfada bulunan tüm h3'leri logla
-            all_h3 = soup.find_all('h3')
-            logging.info(f"Debug: Sayfada toplam {len(all_h3)} adet h3 elementi bulundu")
-            for i, h3 in enumerate(all_h3[:5]):  # İlk 5 tanesini göster
-                logging.info(f"Debug h3[{i}]: {h3.get_text(strip=True)[:100]}")
-            
-            # Announcement içeren div'leri bul
-            announcement_divs = soup.find_all('div', class_=lambda x: x and 'announcement' in x.lower())
-            logging.info(f"Debug: 'announcement' içeren {len(announcement_divs)} div bulundu")
-            
             save_debug_page(page_source)
             notify_admin("Duyuru Script Hatası: Başlık Bulunamadı", 
-                        f"Selenium ile sayfa yüklendi ancak CSS seçicisi eşleşmedi. '{DEBUG_HTML_FILE}' dosyasını kontrol edin.")
+                        f"Selenium ile sayfa yüklendi ancak CSS seçicileri eşleşmedi. '{DEBUG_HTML_FILE}' dosyasını kontrol edin.")
             return None
+            
+        # En iyi sonucu (en çok başlığı içeren) seç
+        best_selector = max(all_results, key=lambda k: len(all_results[k]))
+        cleaned_titles = all_results[best_selector]
         
-        # Başlıkları temizle ve filtrele
-        cleaned_titles = []
-        for title in titles:
-            if title and len(title.strip()) > 5:  # Çok kısa başlıkları filtrele
-                cleaned_titles.append(title.strip())
-        
-        logging.info(f"Toplam {len(cleaned_titles)} adet temizlenmiş başlık bulundu.")
-        logging.info(f"Kullanılan seçici: {successful_selector}")
+        logging.info(f"En iyi sonuç seçildi. Toplam {len(cleaned_titles)} adet temizlenmiş başlık bulundu.")
+        logging.info(f"Kullanılan en verimli seçici: {best_selector}")
         
         return cleaned_titles
+        # --- YENİ MANTIK SONU ---
         
     except Exception as e:
-        logging.error(f"Sayfa çekilirken hata oluştu: {e}")
+        logging.error(f"Sayfa çekilirken genel bir hata oluştu: {e}", exc_info=True)
         try:
             save_debug_page(driver.page_source)
         except:
