@@ -157,6 +157,42 @@ def notify_admin(subject, body):
     logging.critical(f"YÖNETİCİ BİLDİRİMİ GEREKİYOR: Başlık: {subject}")
     logging.critical(f"Detay: {body}")
 
+
+# --- YENİ EKLENEN FONKSİYON ---
+def send_email(subject, html_body):
+    email_enabled = os.getenv("EMAIL_ENABLED", "false").lower() == "true"
+    if not email_enabled:
+        logging.info("E-posta gönderimi kapalı (EMAIL_ENABLED=false).")
+        return
+
+    smtp_server = os.getenv("SMTP_SERVER")
+    smtp_port_str = os.getenv("SMTP_PORT", "587")
+    email_user = os.getenv("EMAIL_USER")
+    email_password = os.getenv("EMAIL_PASSWORD")
+    notification_email = os.getenv("NOTIFICATION_EMAIL")
+
+    if not all([smtp_server, smtp_port_str, email_user, email_password, notification_email]):
+        logging.error("E-posta ayarları eksik! Lütfen GitHub Secrets'ı kontrol edin.")
+        return
+
+    try:
+        smtp_port = int(smtp_port_str)
+        message = MIMEMultipart("alternative")
+        message["Subject"] = subject
+        message["From"] = email_user
+        message["To"] = notification_email
+        message.attach(MIMEText(html_body, "html"))
+
+        context = ssl.create_default_context()
+        with smtplib.SMTP(smtp_server, smtp_port) as server:
+            server.starttls(context=context)
+            server.login(email_user, email_password)
+            server.sendmail(email_user, notification_email, message.as_string())
+        logging.info(f"E-posta başarıyla {notification_email} adresine gönderildi.")
+    except Exception as e:
+        logging.error(f"E-posta gönderilirken kritik bir hata oluştu: {e}", exc_info=True)
+
+
 # --- Selenium WebDriver Kurulumu ---
 def setup_webdriver():
     logging.info("Selenium ile tarayıcı başlatılıyor...")
@@ -201,7 +237,7 @@ def setup_webdriver():
             notify_admin("Selenium Kurulum Hatası", f"WebDriver başlatılamadı: {e}\nFallback hatası: {e2}")
             return None
 
-# --- Çekirdek Fonksiyonlar ---
+# --- Çekirdek Fonksiyonlar (Link Alacak Şekilde Güncellendi) ---
 def scrape_announcements():
     driver = setup_webdriver()
     if not driver:
@@ -211,124 +247,107 @@ def scrape_announcements():
         logging.info(f"Sayfa yükleniyor: {URL}")
         driver.get(URL)
         
-        # Sayfa yüklenmesini bekle
         wait = WebDriverWait(driver, 20)
-        
         try:
-            # Ana duyuru listesinin yüklenmesini bekle
             wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.pal-list")))
             logging.info("Ana duyuru listesi (div.pal-list) bulundu.")
         except TimeoutException:
             logging.warning("Ana duyuru listesi bulunamadı, yine de devam ediliyor...")
         
-        # Sayfayı aşağı kaydırarak tüm içeriğin yüklenmesini sağla
         time.sleep(3)
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(2)
         
         page_source = driver.page_source
         logging.info("Sayfa kaynağı alındı, BeautifulSoup ile parse ediliyor...")
-        
         soup = BeautifulSoup(page_source, 'html.parser')
         
-        # --- İSTEĞİNİZE GÖRE GÜNCELLENEN VE BASİTLEŞTİRİLEN SEÇİCİ LİSTESİ ---
-        selectors = [
-            # Sizin isteğiniz ve HTML yapısına göre en doğru ve öncelikli seçici:
-            "div.pal-list div.item div.has-title",
-            
-            # Sitenin yapısı değişirse diye genel bir yedek seçici:
-            "h3"
-        ]
-        
-        all_results = {} 
+        announcements = []
+        # Her bir duyuru 'item'ını ayrı ayrı işleyeceğiz
+        items = soup.select("div.pal-list div.item")
 
-        for selector in selectors:
-            try:
-                elements = soup.select(selector)
-                if elements:
-                    potential_titles = []
-                    for elem in elements:
-                        # .get_text(strip=True) ile sadece metin içeriğini alıyoruz
-                        text = elem.get_text(strip=True)
-                        if text and len(text) > 10: # Çok kısa veya boş metinleri filtrele
-                            potential_titles.append(text)
-                    
-                    if potential_titles:
-                        # Tekrarlananları önlemek için set kullanıyoruz
-                        all_results[selector] = list(set(potential_titles))
-                        logging.info(f"'{selector}' seçicisi ile {len(all_results[selector])} adet tekil başlık bulundu.")
-            except Exception as e:
-                logging.warning(f"Seçici '{selector}' ile hata: {e}")
-                continue
-        
-        if not all_results:
-            logging.critical("Hiçbir seçici ile duyuru başlığı bulunamadı!")
+        if not items:
+            logging.critical("Hiçbir duyuru 'item'ı bulunamadı!")
             save_debug_page(page_source)
-            notify_admin("Duyuru Script Hatası: Başlık Bulunamadı", 
-                        f"Selenium ile sayfa yüklendi ancak CSS seçicileri eşleşmedi. '{DEBUG_HTML_FILE}' dosyasını kontrol edin.")
             return None
+
+        for item in items:
+            title_element = item.select_one("div.has-title")
+            link_element = item.select_one("a") # Her item'ın içindeki linki bul
             
-        # En çok sonuç veren (en iyi) seçiciyi kullan
-        best_selector = max(all_results, key=lambda k: len(all_results[k]))
-        cleaned_titles = all_results[best_selector]
-        
-        logging.info(f"En iyi sonuç seçildi. Toplam {len(cleaned_titles)} adet temizlenmiş başlık bulundu.")
-        logging.info(f"Kullanılan en verimli seçici: {best_selector}")
-        
-        return cleaned_titles
+            if title_element and link_element and link_element.has_attr('href'):
+                title = title_element.get_text(strip=True)
+                relative_link = link_element['href']
+                
+                # Linkin tam URL olduğundan emin ol
+                if relative_link.startswith('/'):
+                    full_link = f"https://www.maltepe.edu.tr{relative_link}"
+                else:
+                    full_link = relative_link
+                    
+                if title and len(title) > 10:
+                    announcements.append({'title': title, 'link': full_link})
+
+        logging.info(f"Toplam {len(announcements)} adet duyuru başlığı ve linki bulundu.")
+        return announcements
         
     except Exception as e:
         logging.error(f"Sayfa çekilirken genel bir hata oluştu: {e}", exc_info=True)
         try:
             save_debug_page(driver.page_source)
-        except:
-            pass
+        except: pass
         notify_admin("Duyuru Script Hatası: Selenium", f"URL: {URL}\nHata: {e}")
         return None
     finally:
-        try:
+        if driver:
             driver.quit()
             logging.info("Tarayıcı kapatıldı.")
-        except:
-            pass
 
-# --- Ana İş Akışı (E-posta Gönderimi Entegre Edilmiş) ---
+# --- Ana İş Akışı (Linkli ve Filtreli E-posta Gönderimi) ---
 def main():
     setup_logging()
     previous_titles = load_previous_announcements()
-    current_titles = scrape_announcements()
+    current_announcements = scrape_announcements()
 
-    if not current_titles:
+    if not current_announcements:
         logging.warning("Güncel duyuru bulunamadı veya siteye erişilemedi. İşlem sonlandırılıyor.")
         sys.exit(0)
 
-    # İsteğiniz üzerine, bulunan TÜM güncel duyuruları e-posta olarak gönderelim.
-    today_str = datetime.date.today().strftime('%d-%m-%Y')
-    email_subject = f"Maltepe Üniversitesi Güncel Duyurular - {today_str}"
+    # Karşılaştırma için sadece güncel başlıkları içeren bir set oluştur
+    current_titles_set = {ann['title'] for ann in current_announcements}
     
-    # E-posta için HTML içeriği oluştur
-    html_body = f"<h3>Merhaba,</h3><p>Maltepe Üniversitesi web sitesindeki güncel duyurular ({len(current_titles)} adet) aşağıdadır:</p><ul>"
-    for title in sorted(current_titles): # Duyuruları sıralı gönder
-        html_body += f"<li>{title}</li>"
-    html_body += '</ul><hr><p><small>Bu e-posta, GitHub Actions üzerinde çalışan MAU-Duyuru betiği tarafından otomatik olarak gönderilmiştir.</small></p>'
+    # Yeni duyuruları (hem başlık hem link içeren dict'ler olarak) bul
+    new_announcements = [ann for ann in current_announcements if ann['title'] not in previous_titles]
     
-    # E-postayı gönder
-    send_email(email_subject, html_body)
-    
-    # Geriye kalan loglama ve karşılaştırma işlemleri (isteğe bağlı olarak kalabilir)
-    previous_titles_set = set(previous_titles)
-    new_titles = [title for title in current_titles if title not in previous_titles_set]
-    
-    if new_titles:
-        logging.info(f"--- {len(new_titles)} ADET YENİ DUYURU TESPİT EDİLDİ ---")
-        for title in sorted(new_titles):
-            logging.info(f"YENİ: {title}")
-    else:
+    if not new_announcements:
         logging.info("Yeni duyuru bulunamadı.")
+    else:
+        logging.info(f"--- {len(new_announcements)} ADET YENİ DUYURU TESPİT EDİLDİ ---")
+        
+        # Sadece anahtar kelimeyi içeren yeni duyuruları filtrele
+        filtered_announcements = [ann for ann in new_announcements if KEYWORD.lower() in ann['title'].lower()]
+        
+        if filtered_announcements:
+            logging.warning(f"--- ÖNEMLİ: '{KEYWORD}' İÇEREN YENİ DUYURULAR ---")
+            
+            # --- E-POSTA GÖNDERME ADIMI ---
+            email_subject = f"Yeni '{KEYWORD}' Duyurusu Tespit Edildi!"
+            
+            html_body = f"<h3>Merhaba,</h3><p>Maltepe Üniversitesi'nde '{KEYWORD}' kelimesini içeren yeni duyurular bulundu:</p><ul>"
+            for ann in filtered_announcements:
+                logging.warning(f"BULUNDU: {ann['title']}")
+                # E-posta içeriğine tıklanabilir link olarak ekle
+                html_body += f"<li><a href='{ann['link']}' target='_blank'>{ann['title']}</a></li>"
+            html_body += '</ul><hr><p><small>Bu e-posta, MAU-Duyuru betiği tarafından otomatik olarak gönderilmiştir.</small></p>'
+            
+            send_email(email_subject, html_body)
+            # --- E-POSTA GÖNDERME SONU ---
+            
+        else:
+            logging.info(f"Yeni duyurular arasında '{KEYWORD}' içeren bulunamadı.")
 
-    # Her zaman en güncel listeyi JSON dosyasına kaydet
-    save_announcements(current_titles)
+    # JSON dosyasına kaydetmek için sadece başlıkları kullan
+    save_announcements(list(current_titles_set))
     logging.info("Script başarıyla tamamlandı.")
-
 if __name__ == "__main__":
     main()
