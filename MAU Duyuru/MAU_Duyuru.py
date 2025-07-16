@@ -108,14 +108,18 @@ def scrape_announcements():
     try:
         logging.info(f"Sayfa yükleniyor: {URL}")
         driver.get(URL)
+        
+        # Sayfa yüklenmesini bekle
         wait = WebDriverWait(driver, 20)
         
         try:
+            # Ana duyuru listesinin yüklenmesini bekle
             wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.pal-list")))
             logging.info("Ana duyuru listesi (div.pal-list) bulundu.")
         except TimeoutException:
             logging.warning("Ana duyuru listesi bulunamadı, yine de devam ediliyor...")
         
+        # Sayfayı aşağı kaydırarak tüm içeriğin yüklenmesini sağla
         time.sleep(3)
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(2)
@@ -125,29 +129,44 @@ def scrape_announcements():
         
         soup = BeautifulSoup(page_source, 'html.parser')
         
+        # --- İSTEĞİNİZE GÖRE GÜNCELLENEN VE BASİTLEŞTİRİLEN SEÇİCİ LİSTESİ ---
         selectors = [
+            # Sizin isteğiniz ve HTML yapısına göre en doğru ve öncelikli seçici:
             "div.pal-list div.item div.has-title",
+            
+            # Sitenin yapısı değişirse diye genel bir yedek seçici:
             "h3"
         ]
         
         all_results = {} 
+
         for selector in selectors:
             try:
                 elements = soup.select(selector)
                 if elements:
-                    potential_titles = [elem.get_text(strip=True) for elem in elements if elem.get_text(strip=True) and len(elem.get_text(strip=True)) > 10]
+                    potential_titles = []
+                    for elem in elements:
+                        # .get_text(strip=True) ile sadece metin içeriğini alıyoruz
+                        text = elem.get_text(strip=True)
+                        if text and len(text) > 10: # Çok kısa veya boş metinleri filtrele
+                            potential_titles.append(text)
+                    
                     if potential_titles:
+                        # Tekrarlananları önlemek için set kullanıyoruz
                         all_results[selector] = list(set(potential_titles))
                         logging.info(f"'{selector}' seçicisi ile {len(all_results[selector])} adet tekil başlık bulundu.")
             except Exception as e:
                 logging.warning(f"Seçici '{selector}' ile hata: {e}")
-
+                continue
+        
         if not all_results:
             logging.critical("Hiçbir seçici ile duyuru başlığı bulunamadı!")
             save_debug_page(page_source)
-            notify_admin("Duyuru Script Hatası: Başlık Bulunamadı", "Sayfa yüklendi ancak CSS seçicileri eşleşmedi.")
+            notify_admin("Duyuru Script Hatası: Başlık Bulunamadı", 
+                        f"Selenium ile sayfa yüklendi ancak CSS seçicileri eşleşmedi. '{DEBUG_HTML_FILE}' dosyasını kontrol edin.")
             return None
-        
+            
+        # En çok sonuç veren (en iyi) seçiciyi kullan
         best_selector = max(all_results, key=lambda k: len(all_results[k]))
         cleaned_titles = all_results[best_selector]
         
@@ -160,14 +179,16 @@ def scrape_announcements():
         logging.error(f"Sayfa çekilirken genel bir hata oluştu: {e}", exc_info=True)
         try:
             save_debug_page(driver.page_source)
-        except: pass
+        except:
+            pass
         notify_admin("Duyuru Script Hatası: Selenium", f"URL: {URL}\nHata: {e}")
         return None
     finally:
-        if driver:
+        try:
             driver.quit()
             logging.info("Tarayıcı kapatıldı.")
-
+        except:
+            pass
 # --- Ana İş Akışı ---
 def main():
     setup_logging()
