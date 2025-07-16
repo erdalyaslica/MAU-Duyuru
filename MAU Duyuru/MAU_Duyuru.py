@@ -47,42 +47,43 @@ def setup_logging():
     logging.info("="*50)
     logging.info("Duyuru kontrol scripti başlatıldı (Plan C: Selenium Geliştirilmiş).")
 
-# --- YENİ EKLENEN FONKSİYON ---
+# --- GÜNCELLENMİŞ E-POSTA GÖNDERME FONKSİYONU (STARTTLS UYUMLU) ---
 def send_email(subject, html_body):
-    # GitHub Secrets'tan e-posta ayarlarını al
     email_enabled = os.getenv("EMAIL_ENABLED", "false").lower() == "true"
     if not email_enabled:
         logging.info("E-posta gönderimi kapalı (EMAIL_ENABLED=false).")
         return
 
     smtp_server = os.getenv("SMTP_SERVER")
-    smtp_port_str = os.getenv("SMTP_PORT")
+    smtp_port_str = os.getenv("SMTP_PORT", "587") # Varsayılan olarak 587 kullan
     email_user = os.getenv("EMAIL_USER")
     email_password = os.getenv("EMAIL_PASSWORD")
     notification_email = os.getenv("NOTIFICATION_EMAIL")
 
-    # Gerekli tüm bilgilerin olup olmadığını kontrol et
     if not all([smtp_server, smtp_port_str, email_user, email_password, notification_email]):
         logging.error("E-posta ayarları eksik! Lütfen GitHub Secrets'ı kontrol edin.")
         return
 
     try:
-        smtp_port = int(smtp_port_str) # Port numarasını integer'a çevir
+        smtp_port = int(smtp_port_str)
         
-        # E-posta mesajını oluştur
         message = MIMEMultipart("alternative")
         message["Subject"] = subject
         message["From"] = email_user
         message["To"] = notification_email
-        message.attach(MIMEText(html_body, "html")) # HTML içeriğini ekle
+        message.attach(MIMEText(html_body, "html"))
 
-        # Sunucuya bağlan ve e-postayı gönder
         context = ssl.create_default_context()
         logging.info(f"SMTP sunucusuna bağlanılıyor: {smtp_server}:{smtp_port}")
-        with smtplib.SMTP_SSL(smtp_server, smtp_port, context=context) as server:
+
+        # --- DEĞİŞEN BÖLÜM ---
+        # SMTP_SSL yerine standart SMTP ile bağlanıp STARTTLS'e yükseltiyoruz
+        with smtplib.SMTP(smtp_server, smtp_port) as server:
+            server.starttls(context=context) # Güvenli bağlantıya geç
             server.login(email_user, email_password)
             server.sendmail(email_user, notification_email, message.as_string())
-        
+        # --- DEĞİŞİKLİK SONU ---
+            
         logging.info(f"E-posta başarıyla {notification_email} adresine gönderildi.")
 
     except Exception as e:
