@@ -304,6 +304,7 @@ def scrape_announcements():
             logging.info("Tarayıcı kapatıldı.")
 
 # --- Ana İş Akışı (Linkli ve Filtreli E-posta Gönderimi) ---
+# --- Ana İş Akışı (Geliştirilmiş E-posta Mantığı) ---
 def main():
     setup_logging()
     previous_titles = load_previous_announcements()
@@ -313,40 +314,44 @@ def main():
         logging.warning("Güncel duyuru bulunamadı veya siteye erişilemedi. İşlem sonlandırılıyor.")
         sys.exit(0)
 
-    # Karşılaştırma için sadece güncel başlıkları içeren bir set oluştur
-    current_titles_set = {ann['title'] for ann in current_announcements}
+    # 1. Sitedeki "ALINACAKTIR" içeren TÜM aktif duyuruları bul
+    all_keyword_announcements = [
+        ann for ann in current_announcements if KEYWORD.lower() in ann['title'].lower()
+    ]
     
-    # Yeni duyuruları (hem başlık hem link içeren dict'ler olarak) bul
-    new_announcements = [ann for ann in current_announcements if ann['title'] not in previous_titles]
-    
-    if not new_announcements:
-        logging.info("Yeni duyuru bulunamadı.")
+    if not all_keyword_announcements:
+        logging.info(f"Sitede '{KEYWORD}' içeren aktif bir duyuru bulunamadı.")
     else:
-        logging.info(f"--- {len(new_announcements)} ADET YENİ DUYURU TESPİT EDİLDİ ---")
-        
-        # Sadece anahtar kelimeyi içeren yeni duyuruları filtrele
-        filtered_announcements = [ann for ann in new_announcements if KEYWORD.lower() in ann['title'].lower()]
-        
-        if filtered_announcements:
-            logging.warning(f"--- ÖNEMLİ: '{KEYWORD}' İÇEREN YENİ DUYURULAR ---")
+        # 2. Bu aktif duyurulardan hangilerinin YENİ olduğunu kontrol et
+        previous_titles_set = set(previous_titles)
+        new_keyword_announcements = [
+            ann for ann in all_keyword_announcements if ann['title'] not in previous_titles_set
+        ]
+
+        # 3. Eğer en az bir tane YENİ "ALINACAKTIR" duyurusu varsa, e-posta gönder
+        if new_keyword_announcements:
+            logging.warning(f"'{KEYWORD}' içeren YENİ duyuru(lar) tespit edildi! E-posta gönderiliyor...")
             
-            # --- E-POSTA GÖNDERME ADIMI ---
-            email_subject = f"Yeni '{KEYWORD}' Duyurusu Tespit Edildi!"
+            email_subject = f"Maltepe Üni. - Aktif '{KEYWORD}' Duyuruları"
             
-            html_body = f"<h3>Merhaba,</h3><p>Maltepe Üniversitesi'nde '{KEYWORD}' kelimesini içeren yeni duyurular bulundu:</p><ul>"
-            for ann in filtered_announcements:
-                logging.warning(f"BULUNDU: {ann['title']}")
-                # E-posta içeriğine tıklanabilir link olarak ekle
-                html_body += f"<li><a href='{ann['link']}' target='_blank'>{ann['title']}</a></li>"
+            html_body = (f"<h3>Merhaba,</h3>"
+                         f"<p>Maltepe Üniversitesi'nde '{KEYWORD}' kelimesini içeren aktif duyurular aşağıdadır. "
+                         f"Yıldız (★) ile işaretlenenler yenidir.</p>"
+                         f"<ul>")
+
+            for ann in all_keyword_announcements:
+                # E-postada yeni olanları işaretle
+                marker = " &nbsp;<b>★ YENİ!</b>" if ann in new_keyword_announcements else ""
+                html_body += f"<li><a href='{ann['link']}' target='_blank'>{ann['title']}</a>{marker}</li>"
+            
             html_body += '</ul><hr><p><small>Bu e-posta, MAU-Duyuru betiği tarafından otomatik olarak gönderilmiştir.</small></p>'
             
             send_email(email_subject, html_body)
-            # --- E-POSTA GÖNDERME SONU ---
-            
         else:
-            logging.info(f"Yeni duyurular arasında '{KEYWORD}' içeren bulunamadı.")
+            logging.info(f"'{KEYWORD}' içeren yeni bir duyuru bulunamadı (mevcut olanlar daha önce bildirilmiş).")
 
-    # JSON dosyasına kaydetmek için sadece başlıkları kullan
+    # JSON dosyasını kaydetmek için tüm güncel başlıkları kullan
+    current_titles_set = {ann['title'] for ann in current_announcements}
     save_announcements(list(current_titles_set))
     logging.info("Script başarıyla tamamlandı.")
 if __name__ == "__main__":
