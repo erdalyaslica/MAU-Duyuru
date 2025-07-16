@@ -60,6 +60,11 @@ jobs:
           # Dosyada değişiklik olup olmadığını kontrol et
           if [[ -n $(git status --porcelain last_announcements.json) ]]; then
             echo "last_announcements.json dosyasında değişiklikler algılandı. Geri yükleniyor..."
+            
+            # --- YENİ EKLENEN SATIR ---
+            # Değişiklikleri göndermeden önce uzak depodaki değişiklikleri çek (rebase ile temiz bir geçmiş için)
+            git pull --rebase
+            
             git add last_announcements.json
             # [skip ci] ifadesi, bu commit'in tekrar bir iş akışı tetiklemesini engeller (sonsuz döngü olmasın diye)
             git commit -m "Duyuru listesi güncellendi [skip ci]"
