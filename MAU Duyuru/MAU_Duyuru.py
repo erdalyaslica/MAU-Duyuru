@@ -15,6 +15,7 @@ from selenium.common.exceptions import TimeoutException, NoSuchElementException
 from webdriver_manager.chrome import ChromeDriverManager
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
+from selenium.webdriver.chrome.service import Service  # Bu import'u ekleyin
 
 # --- Sabitler ve Konfigürasyon ---
 URL = "https://www.maltepe.edu.tr/tr/duyuru-listesi"
@@ -80,7 +81,9 @@ def notify_admin(subject, body):
     logging.critical(f"YÖNETİCİ BİLDİRİMİ GEREKİYOR: Başlık: {subject}")
     logging.critical(f"Detay: {body}")
 
-# --- Selenium WebDriver Kurulumu ---
+
+
+# --- Selenium WebDriver Kurulumu (Service ile) ---
 def setup_webdriver():
     logging.info("Selenium ile tarayıcı başlatılıyor...")
     
@@ -94,6 +97,30 @@ def setup_webdriver():
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
     chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
     chrome_options.add_experimental_option('useAutomationExtension', False)
+    
+    try:
+        # Service objesi oluştur
+        service = Service(ChromeDriverManager().install())
+        
+        # WebDriver'ı başlat
+        driver = webdriver.Chrome(service=service, options=chrome_options)
+        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        
+        logging.info("WebDriver başarıyla başlatıldı.")
+        return driver
+    except Exception as e:
+        logging.error(f"WebDriver kurulumu başarısız: {e}")
+        notify_admin("Selenium Kurulum Hatası", f"WebDriver başlatılamadı: {e}")
+        return None
+    
+    try:
+        # Service ile doğru kullanım
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=chrome_options)
+        return driver
+    except Exception as e:
+        logging.error(f"WebDriver kurulumu başarısız: {e}")
+        return None
     
     try:
         driver = webdriver.Chrome(ChromeDriverManager().install(), options=chrome_options)
