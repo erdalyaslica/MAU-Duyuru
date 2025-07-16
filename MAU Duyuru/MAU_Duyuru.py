@@ -154,7 +154,6 @@ def setup_webdriver():
             return None
 
 # --- Çekirdek Fonksiyonlar ---
-# --- Çekirdek Fonksiyonlar ---
 def scrape_announcements():
     driver = setup_webdriver()
     if not driver:
@@ -167,14 +166,14 @@ def scrape_announcements():
         # Sayfa yüklenmesini bekle
         wait = WebDriverWait(driver, 20)
         
-        # Ana duyuru konteynerlarından birinin yüklenmesini bekle
         try:
-            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.page-announcement-list, div.announcement-list")))
-            logging.info("Ana duyuru konteyneri bulundu.")
+            # Ana duyuru listesinin yüklenmesini bekle
+            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.pal-list")))
+            logging.info("Ana duyuru listesi (div.pal-list) bulundu.")
         except TimeoutException:
-            logging.warning("Ana duyuru konteyneri bulunamadı, yine de devam ediliyor...")
+            logging.warning("Ana duyuru listesi bulunamadı, yine de devam ediliyor...")
         
-        # JavaScript'in çalışması için ekstra bekleme ve scroll
+        # Sayfayı aşağı kaydırarak tüm içeriğin yüklenmesini sağla
         time.sleep(3)
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(2)
@@ -184,19 +183,16 @@ def scrape_announcements():
         
         soup = BeautifulSoup(page_source, 'html.parser')
         
-        # Geliştirilmiş seçici listesi
+        # --- İSTEĞİNİZE GÖRE GÜNCELLENEN VE BASİTLEŞTİRİLEN SEÇİCİ LİSTESİ ---
         selectors = [
-            "div.page-announcement-list div.announcement-item h3",
-            "div.announcement-list div.announcement-item h3",
-            "div.announcement-item h3",
-            "a.announcement-item-link h3",
-            "div[class*='announcement'] h3",
-            "h3", # Genel fallback
-            "a[href*='duyuru']" # En son fallback
+            # Sizin isteğiniz ve HTML yapısına göre en doğru ve öncelikli seçici:
+            "div.pal-list div.item div.has-title",
+            
+            # Sitenin yapısı değişirse diye genel bir yedek seçici:
+            "h3"
         ]
         
-        # --- YENİ MANTIK BAŞLANGICI ---
-        all_results = {} # Her seçicinin sonucunu saklamak için bir sözlük
+        all_results = {} 
 
         for selector in selectors:
             try:
@@ -204,19 +200,19 @@ def scrape_announcements():
                 if elements:
                     potential_titles = []
                     for elem in elements:
+                        # .get_text(strip=True) ile sadece metin içeriğini alıyoruz
                         text = elem.get_text(strip=True)
-                        if text and len(text) > 10:  # Boş veya çok kısa başlıkları filtrele
-                            potential_titles.append(text.strip())
+                        if text and len(text) > 10: # Çok kısa veya boş metinleri filtrele
+                            potential_titles.append(text)
                     
                     if potential_titles:
-                        # Tekrarlananları önlemek için set kullan
+                        # Tekrarlananları önlemek için set kullanıyoruz
                         all_results[selector] = list(set(potential_titles))
                         logging.info(f"'{selector}' seçicisi ile {len(all_results[selector])} adet tekil başlık bulundu.")
             except Exception as e:
                 logging.warning(f"Seçici '{selector}' ile hata: {e}")
                 continue
         
-        # En çok sonuç veren seçiciyi bul
         if not all_results:
             logging.critical("Hiçbir seçici ile duyuru başlığı bulunamadı!")
             save_debug_page(page_source)
@@ -224,7 +220,7 @@ def scrape_announcements():
                         f"Selenium ile sayfa yüklendi ancak CSS seçicileri eşleşmedi. '{DEBUG_HTML_FILE}' dosyasını kontrol edin.")
             return None
             
-        # En iyi sonucu (en çok başlığı içeren) seç
+        # En çok sonuç veren (en iyi) seçiciyi kullan
         best_selector = max(all_results, key=lambda k: len(all_results[k]))
         cleaned_titles = all_results[best_selector]
         
@@ -232,7 +228,6 @@ def scrape_announcements():
         logging.info(f"Kullanılan en verimli seçici: {best_selector}")
         
         return cleaned_titles
-        # --- YENİ MANTIK SONU ---
         
     except Exception as e:
         logging.error(f"Sayfa çekilirken genel bir hata oluştu: {e}", exc_info=True)
