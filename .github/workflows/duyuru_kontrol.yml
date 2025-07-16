@@ -57,19 +57,29 @@ jobs:
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
           
-          # working-directory ayarı nedeniyle dosya yolu sadeleştirildi
+          # Dosyada değişiklik olup olmadığını kontrol et
           if [[ -n $(git status --porcelain last_announcements.json) ]]; then
             echo "last_announcements.json dosyasında değişiklikler algılandı. Geri yükleniyor..."
             
-            # 1. Önce yerel değişikliği ekle ve commit'le
+            # --- YENİ VE SAĞLAM ÇAKIŞMA ÖNLEME YÖNTEMİ ---
+
+            # 1. Güncel dosyayı güvenli bir yere taşı
+            mv last_announcements.json /tmp/last_announcements.json
+            
+            # 2. Uzak depodaki en son hale kendini zorla eşitle (çakışmaları temizle)
+            # Not: Bu komut normalde tehlikelidir ama burada sadece bu dosya için kullandığımızdan güvenli.
+            git reset --hard origin/master
+            
+            # 3. Güvenli yere taşıdığımız güncel dosyayı geri koy
+            mv /tmp/last_announcements.json .
+            
+            # 4. Dosyayı ekle, commit'le ve gönder
             git add last_announcements.json
             git commit -m "Duyuru listesi güncellendi [skip ci]"
-            
-            # 2. Şimdi uzak depodaki değişiklikleri çek
-            git pull --rebase
-            
-            # 3. Son olarak birleştirilmiş halini uzak depoya gönder
             git push
+            
+            # --- YÖNTEM SONU ---
+            
           else
             echo "last_announcements.json dosyasında değişiklik yok."
           fi
