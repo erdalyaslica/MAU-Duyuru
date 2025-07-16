@@ -1,4 +1,4 @@
-# MAU_Duyuru.py (Plan C: Selenium ile Geliştirilmiş)
+# MAU_Duyuru.py (Stabil Sürüm - Duyuruları Loglama Odaklı)
 
 import os
 import sys
@@ -39,7 +39,7 @@ def setup_logging():
         ]
     )
     logging.info("="*50)
-    logging.info("Duyuru kontrol scripti başlatıldı (Plan C: Selenium Geliştirilmiş).")
+    logging.info("Duyuru kontrol scripti başlatıldı (Stabil Sürüm - Loglama Odaklı).")
 
 # --- Dosya İşlemleri ---
 def load_previous_announcements():
@@ -49,35 +49,9 @@ def load_previous_announcements():
     try:
         with open(JSON_FILE, 'r', encoding='utf-8') as f:
             data = json.load(f)
-            
-            # Veri formatını kontrol et ve normalize et
             if isinstance(data, dict):
-                titles = data.get('titles', [])
-            elif isinstance(data, list):
-                titles = data
-            else:
-                logging.warning(f"Beklenmeyen veri formatı: {type(data)}. Boş liste döndürülüyor.")
-                return []
-            
-            # Tüm öğelerin string olduğundan emin ol
-            clean_titles = []
-            for title in titles:
-                if isinstance(title, str):
-                    clean_titles.append(title)
-                elif isinstance(title, dict):
-                    # Eğer dict ise, 'title' veya 'text' anahtarını ara
-                    if 'title' in title:
-                        clean_titles.append(str(title['title']))
-                    elif 'text' in title:
-                        clean_titles.append(str(title['text']))
-                    else:
-                        logging.warning(f"Dict formatında başlık işlenemedi: {title}")
-                else:
-                    clean_titles.append(str(title))
-            
-            logging.info(f"Önceki duyuru dosyasından {len(clean_titles)} adet başlık yüklendi.")
-            return clean_titles
-            
+                return data.get('titles', [])
+            return [] # Eğer format bozuksa boş liste döndür
     except (json.JSONDecodeError, FileNotFoundError) as e:
         logging.error(f"'{JSON_FILE}' okunurken hata oluştu: {e}. İlk çalıştırma olarak devam ediliyor.")
         return []
@@ -94,7 +68,6 @@ def save_announcements(titles):
         logging.info(f"{len(titles)} adet güncel duyuru '{JSON_FILE}' dosyasına başarıyla kaydedildi.")
     except Exception as e:
         logging.error(f"Duyurular '{JSON_FILE}' dosyasına kaydedilirken hata: {e}")
-        notify_admin(f"Kritik Hata: Duyurular JSON dosyasına yazılamadı!", f"Detaylar: {e}")
 
 # --- Hata Yönetimi ---
 def save_debug_page(content):
@@ -105,53 +78,21 @@ def save_debug_page(content):
     except Exception as e:
         logging.error(f"Debug dosyası kaydedilirken hata oluştu: {e}")
 
-def notify_admin(subject, body):
-    logging.critical(f"YÖNETİCİ BİLDİRİMİ GEREKİYOR: Başlık: {subject}")
-    logging.critical(f"Detay: {body}")
-
 # --- Selenium WebDriver Kurulumu ---
 def setup_webdriver():
     logging.info("Selenium ile tarayıcı başlatılıyor...")
-    
     chrome_options = Options()
     chrome_options.add_argument("--headless")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--window-size=1920,1080")
-    chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
-    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    chrome_options.add_experimental_option('useAutomationExtension', False)
-    
     try:
-        # ChromeDriver yolunu al
-        driver_path = ChromeDriverManager().install()
-        logging.info(f"ChromeDriver yolu: {driver_path}")
-        
-        # WebDriver'ı başlat
-       
-        service = ChromeService(executable_path=driver_path)
+        service = ChromeService(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=chrome_options)
-
-        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-        
         logging.info("WebDriver başarıyla başlatıldı.")
         return driver
     except Exception as e:
-        logging.error(f"WebDriver kurulumu başarısız: {e}")
-        
-        # Fallback: executable_path olmadan dene
-        try:
-            logging.info("Fallback: executable_path olmadan deneniyor...")
-            driver = webdriver.Chrome(options=chrome_options)
-            driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-            logging.info("Fallback WebDriver başarıyla başlatıldı.")
-            return driver
-        except Exception as e2:
-            logging.error(f"Fallback WebDriver kurulumu da başarısız: {e2}")
-            notify_admin("Selenium Kurulum Hatası", f"WebDriver başlatılamadı: {e}\nFallback hatası: {e2}")
-            return None
+        logging.error(f"WebDriver kurulumu başarısız: {e}", exc_info=True)
+        return None
 
 # --- Çekirdek Fonksiyonlar ---
 def scrape_announcements():
@@ -163,136 +104,91 @@ def scrape_announcements():
         logging.info(f"Sayfa yükleniyor: {URL}")
         driver.get(URL)
         
-        # Sayfa yüklenmesini bekle
+        # Olası sunucu hatası için basit kontrol
+        if "500" in driver.title or "Error" in driver.title:
+             logging.error("Site bir sunucu hatası döndürdü. İşlem durduruluyor.")
+             save_debug_page(driver.page_source)
+             return None
+             
         wait = WebDriverWait(driver, 20)
         
         try:
-            # Ana duyuru listesinin yüklenmesini bekle
             wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.pal-list")))
             logging.info("Ana duyuru listesi (div.pal-list) bulundu.")
         except TimeoutException:
-            logging.warning("Ana duyuru listesi bulunamadı, yine de devam ediliyor...")
+            logging.warning("Ana duyuru listesi zamanında bulunamadı. Sayfa içeriği yine de kontrol edilecek.")
         
-        # Sayfayı aşağı kaydırarak tüm içeriğin yüklenmesini sağla
         time.sleep(3)
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(2)
         
         page_source = driver.page_source
         logging.info("Sayfa kaynağı alındı, BeautifulSoup ile parse ediliyor...")
-        
         soup = BeautifulSoup(page_source, 'html.parser')
         
-        # --- İSTEĞİNİZE GÖRE GÜNCELLENEN VE BASİTLEŞTİRİLEN SEÇİCİ LİSTESİ ---
-        selectors = [
-            # Sizin isteğiniz ve HTML yapısına göre en doğru ve öncelikli seçici:
-            "div.pal-list div.item div.has-title",
-            
-            # Sitenin yapısı değişirse diye genel bir yedek seçici:
-            "h3"
-        ]
-        
-        all_results = {} 
+        elements = soup.select("div.pal-list div.item div.has-title")
+        if not elements: # Eğer ana seçici çalışmazsa yedek seçiciyi dene
+            logging.warning("'div.has-title' ile sonuç bulunamadı. Yedek seçici (h3) deneniyor.")
+            elements = soup.select("h3")
 
-        for selector in selectors:
-            try:
-                elements = soup.select(selector)
-                if elements:
-                    potential_titles = []
-                    for elem in elements:
-                        # .get_text(strip=True) ile sadece metin içeriğini alıyoruz
-                        text = elem.get_text(strip=True)
-                        if text and len(text) > 10: # Çok kısa veya boş metinleri filtrele
-                            potential_titles.append(text)
-                    
-                    if potential_titles:
-                        # Tekrarlananları önlemek için set kullanıyoruz
-                        all_results[selector] = list(set(potential_titles))
-                        logging.info(f"'{selector}' seçicisi ile {len(all_results[selector])} adet tekil başlık bulundu.")
-            except Exception as e:
-                logging.warning(f"Seçici '{selector}' ile hata: {e}")
-                continue
-        
-        if not all_results:
+        if not elements:
             logging.critical("Hiçbir seçici ile duyuru başlığı bulunamadı!")
             save_debug_page(page_source)
-            notify_admin("Duyuru Script Hatası: Başlık Bulunamadı", 
-                        f"Selenium ile sayfa yüklendi ancak CSS seçicileri eşleşmedi. '{DEBUG_HTML_FILE}' dosyasını kontrol edin.")
             return None
-            
-        # En çok sonuç veren (en iyi) seçiciyi kullan
-        best_selector = max(all_results, key=lambda k: len(all_results[k]))
-        cleaned_titles = all_results[best_selector]
+
+        cleaned_titles = list(set([elem.get_text(strip=True) for elem in elements if len(elem.get_text(strip=True)) > 10]))
         
-        logging.info(f"En iyi sonuç seçildi. Toplam {len(cleaned_titles)} adet temizlenmiş başlık bulundu.")
-        logging.info(f"Kullanılan en verimli seçici: {best_selector}")
-        
+        logging.info(f"Toplam {len(cleaned_titles)} adet tekil başlık bulundu.")
         return cleaned_titles
         
     except Exception as e:
         logging.error(f"Sayfa çekilirken genel bir hata oluştu: {e}", exc_info=True)
         try:
             save_debug_page(driver.page_source)
-        except:
-            pass
-        notify_admin("Duyuru Script Hatası: Selenium", f"URL: {URL}\nHata: {e}")
+        except: pass
         return None
     finally:
-        try:
+        if driver:
             driver.quit()
             logging.info("Tarayıcı kapatıldı.")
-        except:
-            pass
 
 # --- Ana İş Akışı ---
 def main():
     setup_logging()
     previous_titles = load_previous_announcements()
-    is_first_run = not previous_titles
     current_titles = scrape_announcements()
 
-    if current_titles is None:
-        logging.critical("Veri çekilemediği için işlem sonlandırılıyor.")
-        sys.exit(1)
+    if not current_titles:
+        logging.warning("Güncel duyuru bulunamadı veya siteye erişilemedi. İşlem sonlandırılıyor.")
+        # JSON dosyasını boş kaydetmemek için burada çıkış yapıyoruz.
+        # Böylece bir sonraki çalıştırmada eski liste kaybolmaz.
+        sys.exit(0) 
 
-    if is_first_run:
-        logging.info("İlk çalıştırma. Tüm duyurular listeleniyor:")
-        print("\n--- TÜM DUYURULAR (İLK ÇALIŞTIRMA) ---")
-        for title in current_titles:
-            print(f"- {title}")
-        print("----------------------------------------")
+    # --- İSTEK: Bulunan tüm duyuruları logla ---
+    logging.info("--- SİTEDEKİ GÜNCEL DUYURULAR ---")
+    for title in sorted(current_titles): # Alfabetik sıralı loglayalım
+        logging.info(f"- {title}")
+    logging.info("--- GÜNCEL DUYURU LİSTESİ SONU ---")
+    
+    # --- Yeni duyuruları bulma ve karşılaştırma ---
+    previous_titles_set = set(previous_titles)
+    new_titles = [title for title in current_titles if title not in previous_titles_set]
+    
+    if not new_titles:
+        logging.info("Yeni duyuru bulunamadı.")
     else:
-        logging.info("Sonraki çalıştırma. Sadece yeni ve ilgili duyurular listelenecek.")
-        
-        # Güvenli set dönüşümü
-        try:
-            previous_titles_set = set(str(title) for title in previous_titles if title)
-            current_titles_set = set(str(title) for title in current_titles if title)
-            
-            new_titles = [title for title in current_titles if str(title) not in previous_titles_set]
-            
-            if not new_titles:
-                logging.info("Yeni duyuru bulunamadı.")
-            else:
-                logging.info(f"{len(new_titles)} adet yeni duyuru tespit edildi.")
-                filtered_new_titles = [title for title in new_titles if KEYWORD.lower() in title.lower()]
-                
-                if filtered_new_titles:
-                    logging.info(f"'{KEYWORD}' anahtar kelimesini içeren {len(filtered_new_titles)} yeni duyuru bulundu:")
-                    print(f"\n--- '{KEYWORD}' İÇEREN YENİ DUYURULAR ---")
-                    for title in filtered_new_titles:
-                        print(f"- {title}")
-                    print("-------------------------------------------")
-                else:
-                    logging.info(f"Yeni duyurular arasında '{KEYWORD}' içeren bulunamadı.")
-                    
-        except Exception as e:
-            logging.error(f"Duyuru karşılaştırması sırasında hata: {e}")
-            logging.info("Güvenli mod: Tüm mevcut duyurular listelenecek.")
-            print(f"\n--- MEVCUT DUYURULAR (GÜVENLI MOD) ---")
-            for title in current_titles:
-                print(f"- {title}")
-            print("----------------------------------------")
+        logging.info("--- YENİ DUYURULAR TESPİT EDİLDİ ---")
+        for title in sorted(new_titles):
+            logging.info(f"YENİ: {title}")
+        logging.info("--- YENİ DUYURU LİSTESİ SONU ---")
+
+        # Keyword içeren yeni duyuruları ayrıca belirt
+        filtered_new_titles = [title for title in new_titles if KEYWORD.lower() in title.lower()]
+        if filtered_new_titles:
+            logging.warning(f"--- ÖNEMLİ: '{KEYWORD}' İÇEREN YENİ DUYURULAR ---")
+            for title in sorted(filtered_new_titles):
+                logging.warning(f"BULUNDU: {title}")
+            logging.warning("--- ÖNEMLİ DUYURULAR LİSTE SONU ---")
 
     save_announcements(current_titles)
     logging.info("Script başarıyla tamamlandı.")
