@@ -97,35 +97,10 @@ def load_previous_announcements():
     try:
         with open(JSON_FILE, 'r', encoding='utf-8') as f:
             data = json.load(f)
-            
-            # Veri formatını kontrol et ve normalize et
-            if isinstance(data, dict):
-                titles = data.get('titles', [])
-            elif isinstance(data, list):
-                titles = data
-            else:
-                logging.warning(f"Beklenmeyen veri formatı: {type(data)}. Boş liste döndürülüyor.")
-                return []
-            
-            # Tüm öğelerin string olduğundan emin ol
-            clean_titles = []
-            for title in titles:
-                if isinstance(title, str):
-                    clean_titles.append(title)
-                elif isinstance(title, dict):
-                    # Eğer dict ise, 'title' veya 'text' anahtarını ara
-                    if 'title' in title:
-                        clean_titles.append(str(title['title']))
-                    elif 'text' in title:
-                        clean_titles.append(str(title['text']))
-                    else:
-                        logging.warning(f"Dict formatında başlık işlenemedi: {title}")
-                else:
-                    clean_titles.append(str(title))
-            
-            logging.info(f"Önceki duyuru dosyasından {len(clean_titles)} adet başlık yüklendi.")
-            return clean_titles
-            
+            # Sadece 'titles' anahtarındaki listeyi al, formatı artık standart.
+            titles = data.get('titles', [])
+            logging.info(f"Önceki duyuru dosyasından {len(titles)} adet başlık yüklendi.")
+            return titles
     except (json.JSONDecodeError, FileNotFoundError) as e:
         logging.error(f"'{JSON_FILE}' okunurken hata oluştu: {e}. İlk çalıştırma olarak devam ediliyor.")
         return []
@@ -304,55 +279,57 @@ def scrape_announcements():
             logging.info("Tarayıcı kapatıldı.")
 
 # --- Ana İş Akışı (Linkli ve Filtreli E-posta Gönderimi) ---
-# --- Ana İş Akışı (Geliştirilmiş E-posta Mantığı) ---
+# --- Ana İş Akışı (Sıralama Düzeltilmiş) ---
 def main():
     setup_logging()
     previous_titles = load_previous_announcements()
-    current_announcements = scrape_announcements()
+    is_first_run = not previous_titles
+    current_announcements = scrape_announcements() # Bu zaten sıralı geliyor
 
     if not current_announcements:
-        logging.warning("Güncel duyuru bulunamadı veya siteye erişilemedi. İşlem sonlandırılıyor.")
-        sys.exit(0)
+        logging.critical("Veri çekilemediği için işlem sonlandırılıyor.")
+        sys.exit(1)
 
-    # 1. Sitedeki "ALINACAKTIR" içeren TÜM aktif duyuruları bul
-    all_keyword_announcements = [
-        ann for ann in current_announcements if KEYWORD.lower() in ann['title'].lower()
-    ]
-    
-    if not all_keyword_announcements:
-        logging.info(f"Sitede '{KEYWORD}' içeren aktif bir duyuru bulunamadı.")
+    # --- SIRALAMA DÜZELTMESİ ---
+    # Sıralı gelen duyurulardan sadece başlıkları içeren YENİ BİR SIRALI LİSTE oluştur.
+    current_titles_ordered = [ann['title'] for ann in current_announcements]
+
+    if is_first_run:
+        logging.info("İlk çalıştırma. Tüm duyurular listeleniyor:")
+        print("\n--- TÜM DUYURULAR (İLK ÇALIŞTIRMA) ---")
+        for title in current_titles_ordered: # Sıralı listeyi kullan
+            print(f"- {title}")
+        print("----------------------------------------")
     else:
-        # 2. Bu aktif duyurulardan hangilerinin YENİ olduğunu kontrol et
+        logging.info("Sonraki çalıştırma. Sadece yeni ve ilgili duyurular listelenecek.")
+        
+        # Karşılaştırma için set kullanmak performansı artırır
         previous_titles_set = set(previous_titles)
-        new_keyword_announcements = [
-            ann for ann in all_keyword_announcements if ann['title'] not in previous_titles_set
-        ]
-
-        # 3. Eğer en az bir tane YENİ "ALINACAKTIR" duyurusu varsa, e-posta gönder
-        if new_keyword_announcements:
-            logging.warning(f"'{KEYWORD}' içeren YENİ duyuru(lar) tespit edildi! E-posta gönderiliyor...")
-            
-            email_subject = f"Maltepe Üni. - Aktif '{KEYWORD}' Duyuruları"
-            
-            html_body = (f"<h3>Merhaba,</h3>"
-                         f"<p>Maltepe Üniversitesi'nde '{KEYWORD}' kelimesini içeren aktif duyurular aşağıdadır. "
-                         f"Yıldız (★) ile işaretlenenler yenidir.</p>"
-                         f"<ul>")
-
-            for ann in all_keyword_announcements:
-                # E-postada yeni olanları işaretle
-                marker = " &nbsp;<b>★ YENİ!</b>" if ann in new_keyword_announcements else ""
-                html_body += f"<li><a href='{ann['link']}' target='_blank'>{ann['title']}</a>{marker}</li>"
-            
-            html_body += '</ul><hr><p><small>Bu e-posta, MAU-Duyuru betiği tarafından otomatik olarak gönderilmiştir.</small></p>'
-            
-            send_email(email_subject, html_body)
+        
+        # Yeni duyuruları bul
+        new_announcements = [ann for ann in current_announcements if ann['title'] not in previous_titles_set]
+        
+        if not new_announcements:
+            logging.info("Yeni duyuru bulunamadı.")
         else:
-            logging.info(f"'{KEYWORD}' içeren yeni bir duyuru bulunamadı (mevcut olanlar daha önce bildirilmiş).")
+            logging.info(f"{len(new_announcements)} adet yeni duyuru tespit edildi.")
+            # Filtreleme için yeni duyuruları (dict listesi) kullan
+            filtered_new_announcements = [ann for ann in new_announcements if KEYWORD.lower() in ann['title'].lower()]
+            
+            if filtered_new_announcements:
+                logging.info(f"'{KEYWORD}' anahtar kelimesini içeren {len(filtered_new_announcements)} yeni duyuru bulundu:")
+                print(f"\n--- '{KEYWORD}' İÇEREN YENİ DUYURULAR ---")
+                for ann in filtered_new_announcements:
+                    # E-posta gönderme mantığı gelecekte buraya eklenebilir.
+                    # Örn: send_email(ann['title'], ann['link'])
+                    print(f"- {ann['title']}")
+                print("-------------------------------------------")
+            else:
+                logging.info(f"Yeni duyurular arasında '{KEYWORD}' içeren bulunamadı.")
 
-    # JSON dosyasını kaydetmek için tüm güncel başlıkları kullan
-    current_titles_set = {ann['title'] for ann in current_announcements}
-    save_announcements(list(current_titles_set))
+    # --- SIRALAMA DÜZELTMESİ ---
+    # JSON dosyasına KAYDEDERKEN sıralı listeyi kullan.
+    save_announcements(current_titles_ordered)
     logging.info("Script başarıyla tamamlandı.")
 if __name__ == "__main__":
     main()
