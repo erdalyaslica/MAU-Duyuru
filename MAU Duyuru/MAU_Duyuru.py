@@ -1,11 +1,12 @@
-# MAU_Duyuru.py (403 Forbidden Hatası Çözümü)
+# MAU_Duyuru.py (Plan B: cloudscraper ile 403 Hatası Çözümü)
 
 import os
 import sys
 import json
 import logging
 import datetime
-import requests
+# import requests # <<< DEĞİŞİKLİK 1: requests'i devre dışı bırakıyoruz
+import cloudscraper # <<< DEĞİŞİKLİK 1: cloudscraper'ı içeri aktarıyoruz
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
@@ -22,7 +23,6 @@ load_dotenv(dotenv_path=ENV_FILE)
 
 # --- Loglama Kurulumu ---
 def setup_logging():
-    """Detaylı loglama ayarlarını yapılandırır."""
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] - %(message)s",
@@ -32,9 +32,9 @@ def setup_logging():
         ]
     )
     logging.info("="*50)
-    logging.info("Duyuru kontrol scripti başlatıldı.")
+    logging.info("Duyuru kontrol scripti başlatıldı (Plan B: cloudscraper).")
 
-# --- Dosya İşlemleri ---
+# --- Dosya İşlemleri (Değişiklik yok) ---
 def load_previous_announcements():
     if not os.path.exists(JSON_FILE):
         logging.warning(f"'{JSON_FILE}' bulunamadı. İlk çalıştırma olarak kabul ediliyor.")
@@ -61,7 +61,7 @@ def save_announcements(titles):
         logging.error(f"Duyurular '{JSON_FILE}' dosyasına kaydedilirken hata: {e}")
         notify_admin(f"Kritik Hata: Duyurular JSON dosyasına yazılamadı!", f"Detaylar: {e}")
 
-# --- Hata Yönetimi ve Bildirim ---
+# --- Hata Yönetimi (Değişiklik yok) ---
 def save_debug_page(content):
     try:
         with open(DEBUG_HTML_FILE, 'w', encoding='utf-8') as f:
@@ -76,28 +76,27 @@ def notify_admin(subject, body):
 
 # --- Çekirdek Fonksiyonlar ---
 def scrape_announcements():
-    """Maltepe Üniversitesi duyuru sayfasından başlıkları çeker."""
     logging.info(f"Duyurular şu adresten çekiliyor: {URL}")
+
+    # <<< DEĞİŞİKLİK 2: cloudscraper nesnesi oluşturuluyor >>>
+    # Bu nesne, anti-bot sistemlerini geçmek için gerekli ayarları otomatik yapar.
+    scraper = cloudscraper.create_scraper()
     
-    # <<< GÜNCELLEME BURADA: 403 Hatasını aşmak için tarayıcı başlıkları taklit ediliyor >>>
+    # Not: cloudscraper kendi etkili başlıklarını yönettiği için özel header tanımlamaya gerek kalmayabilir,
+    # ancak fazladan göndermenin zararı olmaz.
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
         'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
-        'DNT': '1', # Do Not Track
-        'Referer': 'https://www.google.com/' # Nereden geldiğimizi belirtmek
+        'Referer': 'https://www.google.com/'
     }
     
     try:
-        response = requests.get(URL, headers=headers, timeout=20)
+        # <<< DEĞİŞİKLİK 3: requests.get() yerine scraper.get() kullanılıyor >>>
+        # cloudscraper, requests ile uyumlu olduğundan hata yakalama (exception) blokları aynı kalabilir.
+        response = scraper.get(URL, headers=headers, timeout=30) # Timeout'u biraz artırmak iyi olabilir
         response.raise_for_status()
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Sayfa çekilirken ağ hatası oluştu: {e}")
-        # Hata durumunda sayfa içeriğini (genellikle bir hata mesajı içerir) kaydetmeyi dene
-        if e.response is not None:
+    except Exception as e: # cloudscraper bazen farklı hatalar fırlatabilir, genel Exception daha güvenli.
+        logging.error(f"Sayfa çekilirken hata oluştu: {e}")
+        if hasattr(e, 'response') and e.response is not None:
             save_debug_page(e.response.text)
         notify_admin("Duyuru Script Hatası: Sayfa Erişimi", f"URL: {URL}\nHata: {e}")
         return None
@@ -113,7 +112,6 @@ def scrape_announcements():
     
     titles = []
     for selector in selectors:
-        logging.info(f"Seçici deneniyor: '{selector}'")
         elements = soup.select(selector)
         if elements:
             titles = [elem.get_text(strip=True) for elem in elements]
@@ -121,14 +119,14 @@ def scrape_announcements():
             break
     
     if not titles:
-        logging.critical("Hiçbir seçici ile duyuru başlığı bulunamadı! Sayfa yapısı değişmiş olabilir.")
+        logging.critical("Hiçbir seçici ile duyuru başlığı bulunamadı! Sayfa yapısı değişmiş veya koruma aşılamamış olabilir.")
         save_debug_page(page_content)
-        notify_admin("Duyuru Script Hatası: Başlık Bulunamadı", "Sayfa yapısı değişmiş olabilir. 'debug_page.html' dosyasını kontrol edin.")
+        notify_admin("Duyuru Script Hatası: Başlık Bulunamadı", f"Sayfa yapısı değişmiş veya koruma aşılamamış olabilir. '{DEBUG_HTML_FILE}' dosyasını kontrol edin.")
         return None
         
     return titles
 
-# --- Ana İş Akışı ---
+# --- Ana İş Akışı (Değişiklik Yok) ---
 def main():
     setup_logging()
     previous_titles = load_previous_announcements()
@@ -139,6 +137,7 @@ def main():
         logging.critical("Veri çekilemediği için işlem sonlandırılıyor.")
         sys.exit(1)
 
+    # ... (main fonksiyonunun geri kalanı aynı)
     if is_first_run:
         logging.info("İlk çalıştırma. Tüm duyurular listeleniyor:")
         print("\n--- TÜM DUYURULAR (İLK ÇALIŞTIRMA) ---")
@@ -167,6 +166,7 @@ def main():
 
     save_announcements(current_titles)
     logging.info("Script başarıyla tamamlandı.")
+
 
 if __name__ == "__main__":
     main()
