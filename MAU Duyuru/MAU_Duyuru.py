@@ -98,7 +98,7 @@ def setup_webdriver():
         logging.error(f"WebDriver kurulumu başarısız: {e}", exc_info=True)
         return None
 
-# --- Çekirdek Fonksiyon (En Stabil Hali) ---
+# --- Çekirdek Fonksiyon (Sunucu Hatası Kontrolü Eklendi) ---
 def scrape_announcements():
     driver = setup_webdriver()
     if not driver:
@@ -107,6 +107,18 @@ def scrape_announcements():
     try:
         logging.info(f"Sayfa yükleniyor: {URL}")
         driver.get(URL)
+        
+        page_source = driver.page_source
+        
+        # --- YENİ EKLENEN KONTROL ---
+        # Sayfa içeriğinde sunucu hatasıyla ilgili bir metin var mı diye kontrol et
+        if "MsgSystemErrorTitle" in page_source or "500" in driver.title:
+            logging.error("Site bir sunucu hatası (500 Internal Server Error) döndürdü.")
+            logging.error("Bu geçici bir sorun olabilir. Script sonlandırılıyor.")
+            save_debug_page(page_source)
+            return None # Hata durumunda None döndürerek işlemi temizce bitir
+        # --- KONTROL SONU ---
+
         wait = WebDriverWait(driver, 20)
         
         try:
@@ -119,6 +131,7 @@ def scrape_announcements():
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(2)
         
+        # Sayfa kaynağını yeniden al, belki scroll sonrası değişmiştir
         page_source = driver.page_source
         logging.info("Sayfa kaynağı alındı, BeautifulSoup ile parse ediliyor...")
         
