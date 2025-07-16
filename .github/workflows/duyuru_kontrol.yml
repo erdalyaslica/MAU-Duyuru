@@ -57,15 +57,15 @@ jobs:
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
           
-          # Dosyada değişiklik olup olmadığını kontrol et
-          if [[ -n $(git status --porcelain "MAU Duyuru/last_announcements.json") ]]; then
+          # working-directory ayarı nedeniyle dosya yolu sadeleştirildi
+          if [[ -n $(git status --porcelain last_announcements.json) ]]; then
             echo "last_announcements.json dosyasında değişiklikler algılandı. Geri yükleniyor..."
             
             # 1. Önce yerel değişikliği ekle ve commit'le
-            git add "MAU Duyuru/last_announcements.json"
+            git add last_announcements.json
             git commit -m "Duyuru listesi güncellendi [skip ci]"
             
-            # 2. Şimdi uzak depodaki değişiklikleri çek ve kendi commit'imizi üzerine tekrar uygula
+            # 2. Şimdi uzak depodaki değişiklikleri çek
             git pull --rebase
             
             # 3. Son olarak birleştirilmiş halini uzak depoya gönder
