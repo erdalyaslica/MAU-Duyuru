@@ -16,6 +16,12 @@ from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.chrome.service import Service as ChromeService
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
+# --- E-POSTA İÇİN GEREKLİ KÜTÜPHANELER ---
+import smtplib
+import ssl
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+# ---
 
 # --- Sabitler ve Konfigürasyon ---
 URL = "https://www.maltepe.edu.tr/tr/duyuru-listesi"
@@ -41,6 +47,47 @@ def setup_logging():
     logging.info("="*50)
     logging.info("Duyuru kontrol scripti başlatıldı (Plan C: Selenium Geliştirilmiş).")
 
+# --- YENİ EKLENEN FONKSİYON ---
+def send_email(subject, html_body):
+    # GitHub Secrets'tan e-posta ayarlarını al
+    email_enabled = os.getenv("EMAIL_ENABLED", "false").lower() == "true"
+    if not email_enabled:
+        logging.info("E-posta gönderimi kapalı (EMAIL_ENABLED=false).")
+        return
+
+    smtp_server = os.getenv("SMTP_SERVER")
+    smtp_port_str = os.getenv("SMTP_PORT")
+    email_user = os.getenv("EMAIL_USER")
+    email_password = os.getenv("EMAIL_PASSWORD")
+    notification_email = os.getenv("NOTIFICATION_EMAIL")
+
+    # Gerekli tüm bilgilerin olup olmadığını kontrol et
+    if not all([smtp_server, smtp_port_str, email_user, email_password, notification_email]):
+        logging.error("E-posta ayarları eksik! Lütfen GitHub Secrets'ı kontrol edin.")
+        return
+
+    try:
+        smtp_port = int(smtp_port_str) # Port numarasını integer'a çevir
+        
+        # E-posta mesajını oluştur
+        message = MIMEMultipart("alternative")
+        message["Subject"] = subject
+        message["From"] = email_user
+        message["To"] = notification_email
+        message.attach(MIMEText(html_body, "html")) # HTML içeriğini ekle
+
+        # Sunucuya bağlan ve e-postayı gönder
+        context = ssl.create_default_context()
+        logging.info(f"SMTP sunucusuna bağlanılıyor: {smtp_server}:{smtp_port}")
+        with smtplib.SMTP_SSL(smtp_server, smtp_port, context=context) as server:
+            server.login(email_user, email_password)
+            server.sendmail(email_user, notification_email, message.as_string())
+        
+        logging.info(f"E-posta başarıyla {notification_email} adresine gönderildi.")
+
+    except Exception as e:
+        logging.error(f"E-posta gönderilirken kritik bir hata oluştu: {e}", exc_info=True)
+        
 # --- Dosya İşlemleri ---
 def load_previous_announcements():
     if not os.path.exists(JSON_FILE):
@@ -244,7 +291,7 @@ def scrape_announcements():
         except:
             pass
 
-# --- Ana İş Akışı (Tüm Duyurularda Keyword Arama) ---
+# --- Ana İş Akışı (E-posta Gönderimi Entegre Edilmiş) ---
 def main():
     setup_logging()
     previous_titles = load_previous_announcements()
@@ -254,27 +301,20 @@ def main():
         logging.warning("Güncel duyuru bulunamadı veya siteye erişilemedi. İşlem sonlandırılıyor.")
         sys.exit(0)
 
-    # Adım 1: Bulunan tüm duyuruları logla
-    logging.info("--- SİTEDEKİ GÜNCEL DUYURULAR ---")
-    for title in sorted(current_titles):
-        logging.info(f"-> {title}")
-    logging.info("--- GÜNCEL DUYURU LİSTESİ SONU ---")
+    # İsteğiniz üzerine, bulunan TÜM güncel duyuruları e-posta olarak gönderelim.
+    today_str = datetime.date.today().strftime('%d-%m-%Y')
+    email_subject = f"Maltepe Üniversitesi Güncel Duyurular - {today_str}"
     
-    # --- YENİ EKLENEN ADIM ---
-    # Adım 2: Tüm güncel duyurular içinde anahtar kelimeyi ara ve vurgula
-    logging.info(f"Tüm güncel duyurular içinde '{KEYWORD}' anahtar kelimesi aranıyor...")
-    all_filtered_titles = [title for title in current_titles if KEYWORD.lower() in title.lower()]
+    # E-posta için HTML içeriği oluştur
+    html_body = f"<h3>Merhaba,</h3><p>Maltepe Üniversitesi web sitesindeki güncel duyurular ({len(current_titles)} adet) aşağıdadır:</p><ul>"
+    for title in sorted(current_titles): # Duyuruları sıralı gönder
+        html_body += f"<li>{title}</li>"
+    html_body += '</ul><hr><p><small>Bu e-posta, GitHub Actions üzerinde çalışan MAU-Duyuru betiği tarafından otomatik olarak gönderilmiştir.</small></p>'
     
-    if all_filtered_titles:
-        logging.warning(f"--- ÖNEMLİ: '{KEYWORD}' İÇEREN GÜNCEL DUYURULAR ---")
-        for title in sorted(all_filtered_titles):
-            logging.warning(f"TESPİT EDİLDİ: {title}")
-        logging.warning("--- ÖNEMLİ DUYURULAR LİSTE SONU ---")
-    else:
-        logging.info(f"Güncel duyurular arasında '{KEYWORD}' içeren bulunamadı.")
-    # --- YENİ ADIM SONU ---
-
-    # Adım 3: Sadece "yeni" duyuruları bul ve bilgilendirme amaçlı logla
+    # E-postayı gönder
+    send_email(email_subject, html_body)
+    
+    # Geriye kalan loglama ve karşılaştırma işlemleri (isteğe bağlı olarak kalabilir)
     previous_titles_set = set(previous_titles)
     new_titles = [title for title in current_titles if title not in previous_titles_set]
     
@@ -282,7 +322,6 @@ def main():
         logging.info(f"--- {len(new_titles)} ADET YENİ DUYURU TESPİT EDİLDİ ---")
         for title in sorted(new_titles):
             logging.info(f"YENİ: {title}")
-        logging.info("--- YENİ DUYURU LİSTESİ SONU ---")
     else:
         logging.info("Yeni duyuru bulunamadı.")
 
