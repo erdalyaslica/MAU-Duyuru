@@ -116,6 +116,10 @@ def announcement_cards(items):
     )
 
 
+def has_important_word(item):
+    return any(word in item["Başlık"].casefold() for word in IMPORTANT_WORDS)
+
+
 def required(name):
     value = os.getenv(name, "").strip()
     if not value:
@@ -187,17 +191,23 @@ def main():
             logging.info("İlk çalışma: %d duyuru başlangıç listesi olarak kaydedildi", len(current))
             return 0
         if new_items:
+            logging.info("%d yeni duyuru bulundu", len(new_items))
+            for item in new_items:
+                logging.info("Yeni duyuru: %s", item["Başlık"])
             try:
                 send_telegram(telegram_text(new_items))
             except Exception as telegram_error:
                 logging.error("Telegram bildirimi gönderilemedi: %s", telegram_error)
-            important = [item for item in new_items if any(word in item["Başlık"].casefold() for word in IMPORTANT_WORDS)]
-            if important:
-                body = email_shell("Önemli Duyuru", f"{len(important)} yeni önemli duyuru.", datetime.now().strftime("%d.%m.%Y %H:%M itibarıyla kriterlerinize uyan kayıtlar."), announcement_cards(important), "#ff3b30")
-                try:
-                    send_email("Maltepe Üniversitesi Önemli Duyuru", body)
-                except Exception as email_error:
-                    logging.error("E-posta bildirimi gönderilemedi: %s", email_error)
+            important = [item for item in new_items if has_important_word(item)]
+            accent = "#ff3b30" if important else "#0071e3"
+            eyebrow = "Önemli Duyuru" if important else "Yeni Duyuru"
+            title = f"{len(new_items)} yeni duyuru bulundu."
+            subtitle = datetime.now().strftime("%d.%m.%Y %H:%M itibarıyla CSV listesinde olmayan yeni kayıtlar.")
+            body = email_shell(eyebrow, title, subtitle, announcement_cards(new_items), accent)
+            try:
+                send_email("Maltepe Üniversitesi Yeni Duyuru", body)
+            except Exception as email_error:
+                logging.error("E-posta bildirimi gönderilemedi: %s", email_error)
         else:
             logging.info("Yeni duyuru yok")
         save_state(current, previous)
