@@ -28,12 +28,27 @@ def normalize_url(url):
 
 
 def fetch_html():
-    response = requests.get(
-        URL,
-        headers={"User-Agent": "Mozilla/5.0 Chrome/142 Safari/537.36", "Accept-Language": "tr-TR,tr;q=0.9"},
-        timeout=60,
-    )
-    response.raise_for_status()
+    headers = {"User-Agent": "Mozilla/5.0 Chrome/142 Safari/537.36", "Accept-Language": "tr-TR,tr;q=0.9"}
+    response = None
+    try:
+        response = requests.get(URL, headers=headers, timeout=60)
+        response.raise_for_status()
+        logging.info("Duyuru sayfası doğrudan bağlantıyla alındı")
+    except requests.RequestException as direct_error:
+        logging.warning("Doğrudan bağlantı başarısız (%s); Scrape.do deneniyor", direct_error)
+        token = os.getenv("SCRAPEDO_TOKEN", "").strip()
+        if not token:
+            raise RuntimeError(
+                "Maltepe sitesi doğrudan erişimi engelledi ve SCRAPEDO_TOKEN tanımlı değil"
+            ) from direct_error
+        response = requests.get(
+            "https://api.scrape.do/",
+            params={"token": token, "url": URL, "super": "true", "geoCode": "tr"},
+            headers=headers,
+            timeout=120,
+        )
+        response.raise_for_status()
+        logging.info("Duyuru sayfası Scrape.do üzerinden alındı")
     if len(response.text) < 5000:
         raise RuntimeError(f"Duyuru sayfası beklenenden kısa geldi ({len(response.text)} karakter)")
     return response.text

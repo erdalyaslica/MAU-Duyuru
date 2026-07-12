@@ -44,6 +44,7 @@ jobs:
           NOTIFICATION_EMAIL: ${{ secrets.NOTIFICATION_EMAIL }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SCRAPEDO_TOKEN: ${{ secrets.SCRAPEDO_TOKEN }}
           SEND_TEST_EMAIL: ${{ inputs.send_test_email || 'false' }}
         run: python MAU_Duyuru.py
       - name: Güncel duyuru listesini Files bölümüne kaydet
