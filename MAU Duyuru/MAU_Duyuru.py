@@ -1,358 +1,190 @@
-# MAU_Duyuru.py (Plan C: Selenium ile Geliştirilmiş)
-
-import os
-import sys
-import json
+import csv
+import html
 import logging
-import datetime
-import time
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.options import Options
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
-from webdriver_manager.chrome import ChromeDriverManager
-from selenium.webdriver.chrome.service import Service as ChromeService
-from bs4 import BeautifulSoup
-from dotenv import load_dotenv
-# --- E-POSTA İÇİN GEREKLİ KÜTÜPHANELER ---
+import os
 import smtplib
-import ssl
+import sys
+from datetime import datetime
 from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-# ---
+from pathlib import Path
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
-# --- Sabitler ve Konfigürasyon ---
-URL = "https://www.maltepe.edu.tr/tr/duyuru-listesi"
-JSON_FILE = "last_announcements.json"
-LOG_FILE = "duyuru.log"
-DEBUG_HTML_FILE = "debug_page.html"
-ENV_FILE = ".env"
-KEYWORD = "ALINACAKTIR"
+import requests
+from bs4 import BeautifulSoup
 
-# --- Ortam Değişkenlerini Yükle ---
-load_dotenv(dotenv_path=ENV_FILE)
+URL = os.getenv("ANNOUNCEMENTS_URL", "https://www.maltepe.edu.tr/tr/duyuru-listesi")
+STATE_FILE = Path(os.getenv("STATE_FILE", "duyurular.csv"))
+IMPORTANT_WORDS = ("alınacaktır", "değerlendirme")
+MIN_ANNOUNCEMENTS = int(os.getenv("MIN_ANNOUNCEMENTS", "20"))
 
-# --- Loglama Kurulumu ---
+
 def setup_logging():
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] - %(message)s",
-        handlers=[
-            logging.FileHandler(LOG_FILE, encoding='utf-8'),
-            logging.StreamHandler(sys.stdout)
-        ]
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+
+def normalize_url(url):
+    parts = urlsplit(urljoin(URL, (url or "").strip()))
+    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path.rstrip("/") or "/", "", ""))
+
+
+def fetch_html():
+    response = requests.get(
+        URL,
+        headers={"User-Agent": "Mozilla/5.0 Chrome/142 Safari/537.36", "Accept-Language": "tr-TR,tr;q=0.9"},
+        timeout=60,
     )
-    logging.info("="*50)
-    logging.info("Duyuru kontrol scripti başlatıldı (Plan C: Selenium Geliştirilmiş).")
+    response.raise_for_status()
+    if len(response.text) < 5000:
+        raise RuntimeError(f"Duyuru sayfası beklenenden kısa geldi ({len(response.text)} karakter)")
+    return response.text
 
-# --- GÜNCELLENMİŞ E-POSTA GÖNDERME FONKSİYONU (STARTTLS UYUMLU) ---
-def send_email(subject, html_body):
-    email_enabled = os.getenv("EMAIL_ENABLED", "false").lower() == "true"
-    if not email_enabled:
-        logging.info("E-posta gönderimi kapalı (EMAIL_ENABLED=false).")
-        return
 
-    smtp_server = os.getenv("SMTP_SERVER")
-    smtp_port_str = os.getenv("SMTP_PORT", "587") # Varsayılan olarak 587 kullan
-    email_user = os.getenv("EMAIL_USER")
-    email_password = os.getenv("EMAIL_PASSWORD")
-    notification_email = os.getenv("NOTIFICATION_EMAIL")
+def parse_announcements(source):
+    soup = BeautifulSoup(source, "html.parser")
+    announcements, seen = [], set()
+    for item in soup.select("div.pal-list div.item"):
+        anchor, title_node = item.select_one("a[href]"), item.select_one("div.has-title")
+        if not anchor or not title_node:
+            continue
+        title = " ".join(title_node.get_text(" ", strip=True).split())
+        link = normalize_url(anchor.get("href", ""))
+        if len(title) < 4 or "/tr/" not in link or link in seen:
+            continue
+        seen.add(link)
+        announcements.append({"Başlık": title, "Link": link})
+    if len(announcements) < MIN_ANNOUNCEMENTS:
+        raise RuntimeError(f"Yalnızca {len(announcements)} duyuru bulundu; sayfa yapısı değişmiş olabilir. Liste korunuyor.")
+    return announcements
 
-    if not all([smtp_server, smtp_port_str, email_user, email_password, notification_email]):
-        logging.error("E-posta ayarları eksik! Lütfen GitHub Secrets'ı kontrol edin.")
-        return
 
-    try:
-        smtp_port = int(smtp_port_str)
-        
-        message = MIMEMultipart("alternative")
-        message["Subject"] = subject
-        message["From"] = email_user
-        message["To"] = notification_email
-        message.attach(MIMEText(html_body, "html"))
-
-        context = ssl.create_default_context()
-        logging.info(f"SMTP sunucusuna bağlanılıyor: {smtp_server}:{smtp_port}")
-
-        # --- DEĞİŞEN BÖLÜM ---
-        # SMTP_SSL yerine standart SMTP ile bağlanıp STARTTLS'e yükseltiyoruz
-        with smtplib.SMTP(smtp_server, smtp_port) as server:
-            server.starttls(context=context) # Güvenli bağlantıya geç
-            server.login(email_user, email_password)
-            server.sendmail(email_user, notification_email, message.as_string())
-        # --- DEĞİŞİKLİK SONU ---
-            
-        logging.info(f"E-posta başarıyla {notification_email} adresine gönderildi.")
-
-    except Exception as e:
-        logging.error(f"E-posta gönderilirken kritik bir hata oluştu: {e}", exc_info=True)
-        
-# --- Dosya İşlemleri ---
-def load_previous_announcements():
-    if not os.path.exists(JSON_FILE):
-        logging.warning(f"'{JSON_FILE}' bulunamadı. İlk çalıştırma olarak kabul ediliyor.")
+def load_state():
+    if not STATE_FILE.exists():
         return []
-    try:
-        with open(JSON_FILE, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            
-            # Veri formatını kontrol et ve normalize et
-            if isinstance(data, dict):
-                titles = data.get('titles', [])
-            elif isinstance(data, list):
-                titles = data
-            else:
-                logging.warning(f"Beklenmeyen veri formatı: {type(data)}. Boş liste döndürülüyor.")
-                return []
-            
-            # Tüm öğelerin string olduğundan emin ol
-            clean_titles = []
-            for title in titles:
-                if isinstance(title, str):
-                    clean_titles.append(title)
-                elif isinstance(title, dict):
-                    # Eğer dict ise, 'title' veya 'text' anahtarını ara
-                    if 'title' in title:
-                        clean_titles.append(str(title['title']))
-                    elif 'text' in title:
-                        clean_titles.append(str(title['text']))
-                    else:
-                        logging.warning(f"Dict formatında başlık işlenemedi: {title}")
-                else:
-                    clean_titles.append(str(title))
-            
-            logging.info(f"Önceki duyuru dosyasından {len(clean_titles)} adet başlık yüklendi.")
-            return clean_titles
-            
-    except (json.JSONDecodeError, FileNotFoundError) as e:
-        logging.error(f"'{JSON_FILE}' okunurken hata oluştu: {e}. İlk çalıştırma olarak devam ediliyor.")
-        return []
-
-def save_announcements(titles):
-    try:
-        with open(JSON_FILE, 'w', encoding='utf-8') as f:
-            payload = {
-                'last_update': datetime.datetime.now().isoformat(),
-                'count': len(titles),
-                'titles': titles
-            }
-            json.dump(payload, f, ensure_ascii=False, indent=4)
-        logging.info(f"{len(titles)} adet güncel duyuru '{JSON_FILE}' dosyasına başarıyla kaydedildi.")
-    except Exception as e:
-        logging.error(f"Duyurular '{JSON_FILE}' dosyasına kaydedilirken hata: {e}")
-        notify_admin(f"Kritik Hata: Duyurular JSON dosyasına yazılamadı!", f"Detaylar: {e}")
-
-# --- Hata Yönetimi ---
-def save_debug_page(content):
-    try:
-        with open(DEBUG_HTML_FILE, 'w', encoding='utf-8') as f:
-            f.write(content)
-        logging.info(f"Hata ayıklama için sayfa kaynağı '{DEBUG_HTML_FILE}' olarak kaydedildi.")
-    except Exception as e:
-        logging.error(f"Debug dosyası kaydedilirken hata oluştu: {e}")
-
-def notify_admin(subject, body):
-    logging.critical(f"YÖNETİCİ BİLDİRİMİ GEREKİYOR: Başlık: {subject}")
-    logging.critical(f"Detay: {body}")
+    with STATE_FILE.open(encoding="utf-8-sig", newline="") as handle:
+        return list(csv.DictReader(handle))
 
 
-# --- YENİ EKLENEN FONKSİYON ---
-def send_email(subject, html_body):
-    email_enabled = os.getenv("EMAIL_ENABLED", "false").lower() == "true"
-    if not email_enabled:
-        logging.info("E-posta gönderimi kapalı (EMAIL_ENABLED=false).")
+def save_state(current, previous):
+    previous_by_link = {normalize_url(row.get("Link", "")): row for row in previous}
+    now = datetime.now().strftime("%d.%m.%Y %H:%M")
+    rows = []
+    for item in current:
+        old = previous_by_link.get(normalize_url(item["Link"]), {})
+        rows.append({"Duyuru Başlığı": item["Başlık"], "Link": item["Link"], "Eklenme Tarihi": old.get("Eklenme Tarihi") or now, "Mail Durumu": old.get("Mail Durumu") or "ℹ️ Listeye Eklendi"})
+    temp = STATE_FILE.with_suffix(".tmp")
+    with temp.open("w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=("Duyuru Başlığı", "Link", "Eklenme Tarihi", "Mail Durumu"))
+        writer.writeheader()
+        writer.writerows(rows)
+    temp.replace(STATE_FILE)
+
+
+def email_shell(eyebrow, title, subtitle, content, accent="#0071e3"):
+    return f"""<!doctype html><html><body style="margin:0;background:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;color:#1d1d1f">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td align="center" style="padding:40px 16px">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:720px;background:#fff;border-radius:24px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.08)">
+    <tr><td style="height:6px;background:{accent}">&nbsp;</td></tr><tr><td style="padding:44px 44px 24px">
+    <div style="font-size:12px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;color:{accent}">{eyebrow}</div>
+    <h1 style="margin:10px 0 12px;font-size:34px;line-height:40px">{title}</h1>
+    <p style="margin:0;font-size:17px;line-height:26px;color:#6e6e73">{subtitle}</p></td></tr>
+    <tr><td style="padding:0 44px 44px">{content}</td></tr></table>
+    <p style="font-size:12px;color:#86868b">MAU Duyuru · GitHub Actions</p>
+    </td></tr></table></body></html>"""
+
+
+def announcement_cards(items):
+    return "".join(
+        f"""<div style="margin-top:14px;padding:20px;border:1px solid #e8e8ed;border-radius:16px">
+        <div style="font-size:16px;line-height:23px;font-weight:650">{html.escape(item['Başlık'])}</div>
+        <a href="{html.escape(item['Link'], quote=True)}" style="display:inline-block;margin-top:12px;color:#0071e3;text-decoration:none;font-size:14px;font-weight:600">Duyuruyu görüntüle →</a></div>"""
+        for item in items
+    )
+
+
+def required(name):
+    value = os.getenv(name, "").strip()
+    if not value:
+        raise RuntimeError(f"Eksik ortam değişkeni: {name}")
+    return value
+
+
+def send_email(subject, body):
+    if os.getenv("EMAIL_ENABLED", "true").lower() != "true":
+        logging.info("E-posta gönderimi kapalı")
         return
+    sender = required("EMAIL_USER")
+    recipients = [x.strip() for x in required("NOTIFICATION_EMAIL").split(",") if x.strip()]
+    msg = MIMEText(body, "html", "utf-8")
+    msg["Subject"], msg["From"], msg["To"] = subject, sender, ", ".join(recipients)
+    with smtplib.SMTP(os.getenv("SMTP_SERVER", "smtp.gmail.com"), int(os.getenv("SMTP_PORT", "587"))) as server:
+        server.starttls()
+        server.login(sender, required("EMAIL_PASSWORD"))
+        server.sendmail(sender, recipients, msg.as_string())
 
-    smtp_server = os.getenv("SMTP_SERVER")
-    smtp_port_str = os.getenv("SMTP_PORT", "587")
-    email_user = os.getenv("EMAIL_USER")
-    email_password = os.getenv("EMAIL_PASSWORD")
-    notification_email = os.getenv("NOTIFICATION_EMAIL")
 
-    if not all([smtp_server, smtp_port_str, email_user, email_password, notification_email]):
-        logging.error("E-posta ayarları eksik! Lütfen GitHub Secrets'ı kontrol edin.")
+def telegram_text(items):
+    lines = ["📣 Maltepe Üniversitesi Yeni Duyurular", datetime.now().strftime("🕒 %d.%m.%Y %H:%M"), "", f"Toplam {len(items)} yeni duyuru:"]
+    for index, item in enumerate(items, 1):
+        lines.extend(["", f"{index}. {item['Başlık']}", f"🔗 {item['Link']}"])
+    return "\n".join(lines)
+
+
+def send_telegram(text):
+    token, chat_id = os.getenv("TELEGRAM_TOKEN", "").strip(), os.getenv("TELEGRAM_CHAT_ID", "").strip()
+    if not token or not chat_id:
+        logging.info("Telegram ayarları yok; bildirim atlandı")
         return
-
-    try:
-        smtp_port = int(smtp_port_str)
-        message = MIMEMultipart("alternative")
-        message["Subject"] = subject
-        message["From"] = email_user
-        message["To"] = notification_email
-        message.attach(MIMEText(html_body, "html"))
-
-        context = ssl.create_default_context()
-        with smtplib.SMTP(smtp_server, smtp_port) as server:
-            server.starttls(context=context)
-            server.login(email_user, email_password)
-            server.sendmail(email_user, notification_email, message.as_string())
-        logging.info(f"E-posta başarıyla {notification_email} adresine gönderildi.")
-    except Exception as e:
-        logging.error(f"E-posta gönderilirken kritik bir hata oluştu: {e}", exc_info=True)
+    chunks, current = [], ""
+    for line in text.splitlines(keepends=True):
+        if len(current) + len(line) > 3800 and current:
+            chunks.append(current.rstrip())
+            current = ""
+        current += line
+    if current:
+        chunks.append(current.rstrip())
+    for chunk in chunks:
+        response = requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": chunk, "disable_web_page_preview": True}, timeout=30)
+        response.raise_for_status()
 
 
-# --- Selenium WebDriver Kurulumu ---
-def setup_webdriver():
-    logging.info("Selenium ile tarayıcı başlatılıyor...")
-    
-    chrome_options = Options()
-    chrome_options.add_argument("--headless")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--window-size=1920,1080")
-    chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
-    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    chrome_options.add_experimental_option('useAutomationExtension', False)
-    
-    try:
-        # ChromeDriver yolunu al
-        driver_path = ChromeDriverManager().install()
-        logging.info(f"ChromeDriver yolu: {driver_path}")
-        
-        # WebDriver'ı başlat
-       
-        service = ChromeService(executable_path=driver_path)
-        driver = webdriver.Chrome(service=service, options=chrome_options)
+def test_email():
+    body = email_shell("Sistem Kontrolü", "Duyuru sistemi hazır.", "GitHub Actions ve e-posta bağlantınız sorunsuz çalışıyor.", f"""<div style="margin-top:28px;padding:22px;border-radius:18px;background:#f5f5f7"><b>Test başarıyla tamamlandı</b><div style="margin-top:7px;font-size:13px;color:#6e6e73">{datetime.now().strftime('%d.%m.%Y %H:%M')} · Duyuru listesi değiştirilmedi</div></div>""", "#30a14e")
+    send_email("MAU Duyuru Sistemi Testi Başarılı", body)
 
-        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-        
-        logging.info("WebDriver başarıyla başlatıldı.")
-        return driver
-    except Exception as e:
-        logging.error(f"WebDriver kurulumu başarısız: {e}")
-        
-        # Fallback: executable_path olmadan dene
-        try:
-            logging.info("Fallback: executable_path olmadan deneniyor...")
-            driver = webdriver.Chrome(options=chrome_options)
-            driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-            logging.info("Fallback WebDriver başarıyla başlatıldı.")
-            return driver
-        except Exception as e2:
-            logging.error(f"Fallback WebDriver kurulumu da başarısız: {e2}")
-            notify_admin("Selenium Kurulum Hatası", f"WebDriver başlatılamadı: {e}\nFallback hatası: {e2}")
-            return None
 
-# --- Çekirdek Fonksiyonlar (Link Alacak Şekilde Güncellendi) ---
-def scrape_announcements():
-    driver = setup_webdriver()
-    if not driver:
-        return None
-    
-    try:
-        logging.info(f"Sayfa yükleniyor: {URL}")
-        driver.get(URL)
-        
-        wait = WebDriverWait(driver, 20)
-        try:
-            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.pal-list")))
-            logging.info("Ana duyuru listesi (div.pal-list) bulundu.")
-        except TimeoutException:
-            logging.warning("Ana duyuru listesi bulunamadı, yine de devam ediliyor...")
-        
-        time.sleep(3)
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-        time.sleep(2)
-        
-        page_source = driver.page_source
-        logging.info("Sayfa kaynağı alındı, BeautifulSoup ile parse ediliyor...")
-        soup = BeautifulSoup(page_source, 'html.parser')
-        
-        announcements = []
-        # Her bir duyuru 'item'ını ayrı ayrı işleyeceğiz
-        items = soup.select("div.pal-list div.item")
-
-        if not items:
-            logging.critical("Hiçbir duyuru 'item'ı bulunamadı!")
-            save_debug_page(page_source)
-            return None
-
-        for item in items:
-            title_element = item.select_one("div.has-title")
-            link_element = item.select_one("a") # Her item'ın içindeki linki bul
-            
-            if title_element and link_element and link_element.has_attr('href'):
-                title = title_element.get_text(strip=True)
-                relative_link = link_element['href']
-                
-                # Linkin tam URL olduğundan emin ol
-                if relative_link.startswith('/'):
-                    full_link = f"https://www.maltepe.edu.tr{relative_link}"
-                else:
-                    full_link = relative_link
-                    
-                if title and len(title) > 10:
-                    announcements.append({'title': title, 'link': full_link})
-
-        logging.info(f"Toplam {len(announcements)} adet duyuru başlığı ve linki bulundu.")
-        return announcements
-        
-    except Exception as e:
-        logging.error(f"Sayfa çekilirken genel bir hata oluştu: {e}", exc_info=True)
-        try:
-            save_debug_page(driver.page_source)
-        except: pass
-        notify_admin("Duyuru Script Hatası: Selenium", f"URL: {URL}\nHata: {e}")
-        return None
-    finally:
-        if driver:
-            driver.quit()
-            logging.info("Tarayıcı kapatıldı.")
-
-# --- Ana İş Akışı (Linkli ve Filtreli E-posta Gönderimi) ---
-# --- Ana İş Akışı (Geliştirilmiş E-posta Mantığı) ---
 def main():
     setup_logging()
-    previous_titles = load_previous_announcements()
-    current_announcements = scrape_announcements()
-
-    if not current_announcements:
-        logging.warning("Güncel duyuru bulunamadı veya siteye erişilemedi. İşlem sonlandırılıyor.")
-        sys.exit(0)
-
-    # 1. Sitedeki "ALINACAKTIR" içeren TÜM aktif duyuruları bul
-    all_keyword_announcements = [
-        ann for ann in current_announcements if KEYWORD.lower() in ann['title'].lower()
-    ]
-    
-    if not all_keyword_announcements:
-        logging.info(f"Sitede '{KEYWORD}' içeren aktif bir duyuru bulunamadı.")
-    else:
-        # 2. Bu aktif duyurulardan hangilerinin YENİ olduğunu kontrol et
-        previous_titles_set = set(previous_titles)
-        new_keyword_announcements = [
-            ann for ann in all_keyword_announcements if ann['title'] not in previous_titles_set
-        ]
-
-        # 3. Eğer en az bir tane YENİ "ALINACAKTIR" duyurusu varsa, e-posta gönder
-        if new_keyword_announcements:
-            logging.warning(f"'{KEYWORD}' içeren YENİ duyuru(lar) tespit edildi! E-posta gönderiliyor...")
-            
-            email_subject = f"Maltepe Üni. Personel Alımı Duyurusu"
-            
-            html_body = (f"<h3>Merhaba,</h3>"
-                         f"<p>Maltepe Üniversitesi'nde '{KEYWORD}' kelimesini içeren aktif duyurular aşağıdadır. "
-                         f"Yıldız (★) ile işaretlenenler yenidir.</p>"
-                         f"<ul>")
-
-            for ann in all_keyword_announcements:
-                # E-postada yeni olanları işaretle
-                marker = " &nbsp;<b>★ YENİ!</b>" if ann in new_keyword_announcements else ""
-                html_body += f"<li><a href='{ann['link']}' target='_blank'>{ann['title']}</a>{marker}</li>"
-            
-            html_body += '</ul><hr><p><small>Bu e-posta, MAU-Duyuru betiği GİTHUB Actions tarafından otomatik olarak gönderilmiştir.</small></p>'
-            
-            send_email(email_subject, html_body)
+    try:
+        if os.getenv("SEND_TEST_EMAIL", "").lower() == "true":
+            test_email()
+            return 0
+        previous = load_state()
+        current = parse_announcements(fetch_html())
+        previous_links = {normalize_url(row.get("Link", "")) for row in previous}
+        new_items = [item for item in current if normalize_url(item["Link"]) not in previous_links]
+        if not previous:
+            save_state(current, [])
+            logging.info("İlk çalışma: %d duyuru başlangıç listesi olarak kaydedildi", len(current))
+            return 0
+        if new_items:
+            send_telegram(telegram_text(new_items))
+            important = [item for item in new_items if any(word in item["Başlık"].casefold() for word in IMPORTANT_WORDS)]
+            if important:
+                body = email_shell("Önemli Duyuru", f"{len(important)} yeni önemli duyuru.", datetime.now().strftime("%d.%m.%Y %H:%M itibarıyla kriterlerinize uyan kayıtlar."), announcement_cards(important), "#ff3b30")
+                send_email("Maltepe Üniversitesi Önemli Duyuru", body)
         else:
-            logging.info(f"'{KEYWORD}' içeren yeni bir duyuru bulunamadı (mevcut olanlar daha önce bildirilmiş).")
+            logging.info("Yeni duyuru yok")
+        save_state(current, previous)
+        logging.info("%d güncel, %d yeni duyuru işlendi", len(current), len(new_items))
+        return 0
+    except Exception as exc:
+        logging.exception("Duyuru kontrolü başarısız: %s", exc)
+        try:
+            send_telegram("⚠️ MAU Duyuru sistemi hata verdi:\n" + str(exc))
+        except Exception:
+            logging.exception("Telegram hata bildirimi gönderilemedi")
+        return 1
 
-    # JSON dosyasını kaydetmek için tüm güncel başlıkları kullan
-    current_titles_set = {ann['title'] for ann in current_announcements}
-    save_announcements(list(current_titles_set))
-    logging.info("Script başarıyla tamamlandı.")
+
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

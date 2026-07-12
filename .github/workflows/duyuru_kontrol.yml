@@ -1,46 +1,40 @@
-# İş akışının adı
 name: Maltepe Duyuru Kontrol
 
 on:
-  schedule:
-    # Hafta içi her gün saat 10:00 (Türkiye saati) için cron zamanlaması
-    - cron: '0 7 * * 1-5'
-
-   # --- YENİ EKLENDİ: Akşam 17:00 kontrolü ---
-    # Her gün saat 17:00 (Türkiye saati) için yeni cron zamanlaması. 17:00 (UTC+3) -> 14:00 (UTC)
-    - cron: '0 14 * * *'
-    
   workflow_dispatch:
-  push:
-    branches:
-      - main
-      - master
+    inputs:
+      send_test_email:
+        description: "Yalnızca test e-postası gönder"
+        required: false
+        type: boolean
+        default: false
+  schedule:
+    - cron: "0 7 * * 1-5"
+    - cron: "0 14 * * *"
 
-# --- YENİ EKLENDİ: İŞ AKIŞINA YAZMA İZNİ VERME ---
-# Bu bölüm, iş akışının deponuza dosya gönderebilmesi için gereklidir.
+concurrency:
+  group: mau-duyuru
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
 jobs:
   check-announcements:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
-        working-directory: 'MAU Duyuru'
-
+        working-directory: "MAU Duyuru"
     steps:
-      - name: Depoyu Klonla
-        uses: actions/checkout@v4
-
-      - name: Python'u Kur
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-
-      - name: Bağımlılıkları Yükle
-        run: pip install -r requirements.txt
-
-      - name: Duyuru Takip Script'ini Çalıştır
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: "MAU Duyuru/requirements.txt"
+      - run: pip install -r requirements.txt
+      - name: Duyuruları kontrol et
         env:
           EMAIL_ENABLED: ${{ secrets.EMAIL_ENABLED }}
           SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
@@ -48,30 +42,27 @@ jobs:
           EMAIL_USER: ${{ secrets.EMAIL_USER }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           NOTIFICATION_EMAIL: ${{ secrets.NOTIFICATION_EMAIL }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SEND_TEST_EMAIL: ${{ inputs.send_test_email || 'false' }}
         run: python MAU_Duyuru.py
-      
-      - name: Güncel Duyuru Listesini Geri Yükle
+      - name: Güncel duyuru listesini Files bölümüne kaydet
+        if: success() && hashFiles('MAU Duyuru/duyurular.csv') != ''
+        working-directory: .
         run: |
-          git config --global user.name 'github-actions[bot]'
-          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          
-          if [[ -n $(git status --porcelain last_announcements.json) ]]; then
-            echo "last_announcements.json dosyasında değişiklikler algılandı. Geri yükleniyor..."
-            
-            # --- SAĞLAM ÇAKIŞMA ÖNLEME YÖNTEMİ ---
-            # 1. Güncel dosyayı güvenli bir yere taşı
-            mv last_announcements.json /tmp/last_announcements.json
-            
-            # 2. Uzak depodaki en son hale kendini zorla eşitle
-            git reset --hard origin/master
-            
-            # 3. Güvenli yere taşıdığımız güncel dosyayı geri koy
-            mv /tmp/last_announcements.json .
-            
-            # 4. Dosyayı ekle, commit'le ve gönder
-            git add last_announcements.json
-            git commit -m "Duyuru listesi güncellendi [skip ci]"
-            git push
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "MAU Duyuru/duyurular.csv"
+          if git diff --cached --quiet; then
+            echo "Duyuru listesinde değişiklik yok."
           else
-            echo "last_announcements.json dosyasında değişiklik yok."
+            git commit -m "Duyuru listesini güncelle [skip ci]"
+            git push
           fi
+      - name: İndirilebilir duyuru listesini yayınla
+        if: success() && hashFiles('MAU Duyuru/duyurular.csv') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: duyuru-listesi-${{ github.run_number }}
+          path: "MAU Duyuru/duyurular.csv"
+          retention-days: 30
