@@ -159,7 +159,12 @@ def send_telegram(text):
         chunks.append(current.rstrip())
     for chunk in chunks:
         response = requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": chunk, "disable_web_page_preview": True}, timeout=30)
-        response.raise_for_status()
+        if not response.ok:
+            try:
+                detail = response.json().get("description") or response.text
+            except ValueError:
+                detail = response.text
+            raise RuntimeError(f"Telegram API {response.status_code}: {detail[:500]}")
 
 
 def test_email():
@@ -182,11 +187,17 @@ def main():
             logging.info("İlk çalışma: %d duyuru başlangıç listesi olarak kaydedildi", len(current))
             return 0
         if new_items:
-            send_telegram(telegram_text(new_items))
+            try:
+                send_telegram(telegram_text(new_items))
+            except Exception as telegram_error:
+                logging.error("Telegram bildirimi gönderilemedi: %s", telegram_error)
             important = [item for item in new_items if any(word in item["Başlık"].casefold() for word in IMPORTANT_WORDS)]
             if important:
                 body = email_shell("Önemli Duyuru", f"{len(important)} yeni önemli duyuru.", datetime.now().strftime("%d.%m.%Y %H:%M itibarıyla kriterlerinize uyan kayıtlar."), announcement_cards(important), "#ff3b30")
-                send_email("Maltepe Üniversitesi Önemli Duyuru", body)
+                try:
+                    send_email("Maltepe Üniversitesi Önemli Duyuru", body)
+                except Exception as email_error:
+                    logging.error("E-posta bildirimi gönderilemedi: %s", email_error)
         else:
             logging.info("Yeni duyuru yok")
         save_state(current, previous)
