@@ -1,6 +1,6 @@
 # MAU Duyuru Takip
 
-Maltepe Üniversitesi duyuru sayfasını düzenli kontrol eder. Yeni duyuruları `data/duyurular.csv` dosyasındaki kayıtlarla karşılaştırır; CSV'de olmayan kayıtları yeni kabul edip e-posta ve Telegram bildirimi göndermeyi dener.
+M Üniversitesi duyuru sayfasını düzenli kontrol eder. Yeni duyuruları `data/duyurular.csv` dosyasındaki kayıtlarla karşılaştırır; CSV'de olmayan kayıtları yeni kabul edip e-posta ve Telegram bildirimi göndermeyi dener.
 
 ## Klasör yapısı
 
