@@ -1,3 +1,4 @@
+from panel_result import panel_only, write_result, person_summary
 import csv
 import html
 import logging
@@ -80,6 +81,8 @@ def load_state():
 
 
 def save_state(current, previous):
+    if panel_only():
+        return
     previous_by_link = {normalize_url(row.get("Link", "")): row for row in previous}
     now = datetime.now().strftime("%d.%m.%Y %H:%M")
     rows = []
@@ -128,6 +131,8 @@ def required(name):
 
 
 def send_email(subject, body):
+    if panel_only():
+        return
     if os.getenv("EMAIL_ENABLED", "true").lower() != "true":
         logging.info("E-posta gönderimi kapalı")
         return
@@ -149,6 +154,8 @@ def telegram_text(items):
 
 
 def send_telegram(text):
+    if panel_only():
+        return
     token, chat_id = os.getenv("TELEGRAM_TOKEN", "").strip(), os.getenv("TELEGRAM_CHAT_ID", "").strip()
     if not token or not chat_id:
         logging.info("Telegram ayarları yok; bildirim atlandı")
@@ -186,6 +193,7 @@ def main():
         current = parse_announcements(fetch_html())
         previous_links = {normalize_url(row.get("Link", "")) for row in previous}
         new_items = [item for item in current if normalize_url(item["Link"]) not in previous_links]
+        write_result("duyuru", status="success", summary=f"{len(new_items)} yeni duyuru." if previous and new_items else "Yeni duyuru yok." if previous else "İlk duyuru listesi oluşturuldu.", initial=not bool(previous), total=len(current), newItems=[{"title":i["Başlık"], "url":i["Link"]} for i in new_items] if previous else [], items=[{"title":i["Başlık"], "url":i["Link"]} for i in current[:30]])
         if not previous:
             save_state(current, [])
             logging.info("İlk çalışma: %d duyuru başlangıç listesi olarak kaydedildi", len(current))
@@ -214,6 +222,7 @@ def main():
         logging.info("%d güncel, %d yeni duyuru işlendi", len(current), len(new_items))
         return 0
     except Exception as exc:
+        write_result("duyuru", status="error", summary="Duyuru kontrolü tamamlanamadı.")
         logging.exception("Duyuru kontrolü başarısız: %s", exc)
         try:
             send_telegram("⚠️ MAU Duyuru sistemi hata verdi:\n" + str(exc))

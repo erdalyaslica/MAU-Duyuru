@@ -3,6 +3,11 @@ name: Maltepe Duyuru Kontrol
 on:
   workflow_dispatch:
     inputs:
+      panel_only:
+        description: "Panelde göster; bildirim gönderme ve karşılaştırma listesini değiştirme"
+        type: boolean
+        required: false
+        default: false
       send_test_email:
         description: "Yalnızca test e-postası gönder"
         required: false
@@ -25,6 +30,8 @@ jobs:
   check-announcements:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      PANEL_ONLY: ${{ inputs.panel_only || 'false' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -45,7 +52,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           SCRAPEDO_TOKEN: ${{ secrets.SCRAPEDO_TOKEN }}
           SEND_TEST_EMAIL: ${{ inputs.send_test_email || 'false' }}
-        run: python src/mau_duyuru.py
+        run: python -m src.mau_duyuru
       - name: Güncel duyuru listesini Files bölümüne kaydet
         if: success() && hashFiles('data/duyurular.csv') != ''
         run: |
@@ -65,3 +72,12 @@ jobs:
           name: duyuru-listesi-${{ github.run_number }}
           path: "data/duyurular.csv"
           retention-days: 30
+
+      - name: Panel sonucunu sakla
+        if: always() && hashFiles('panel-result.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: panel-result
+          path: panel-result.json
+          retention-days: 30
+          if-no-files-found: error
